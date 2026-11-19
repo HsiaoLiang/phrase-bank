@@ -1,0 +1,339 @@
+import { useEffect, useMemo, useState } from "react";
+import { Brain, ClipboardCheck, Crown, Flame, Layers, Medal, Menu, Moon, Plus, Puzzle, Search, Sun, Target, Trophy } from "lucide-react";
+import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
+import { cn } from "@/lib/utils";
+import { tabName } from "@/lib/data";
+import { XP } from "@/lib/game";
+import { useBank } from "@/lib/store";
+import type { Filters, Item, StudyMode, TabKey } from "@/lib/types";
+import { Bar, LevelBadge, Ring, fmtTime } from "@/components/game/bits";
+import { FxLayer } from "@/components/game/FxLayer";
+import { FilterChips, LeftNav } from "@/components/LeftNav";
+import { PlayerPanel } from "@/components/PlayerPanel";
+import { Flashcards } from "@/components/Flashcards";
+import { TermList } from "@/components/TermList";
+import { Study } from "@/components/Study";
+import { AddDialog } from "@/components/AddDialog";
+
+const LS_PREFS = "phraseBank.prefs";
+interface Prefs {
+  front?: "zh" | "en";
+  theme?: "dark" | "light";
+}
+function readPrefs(): Prefs {
+  try {
+    return JSON.parse(localStorage.getItem(LS_PREFS) || "{}") as Prefs;
+  } catch {
+    return {};
+  }
+}
+function writePrefs(p: Prefs) {
+  try {
+    localStorage.setItem(LS_PREFS, JSON.stringify(p));
+  } catch {
+    /* ignore */
+  }
+}
+
+function norm(s: string) {
+  return s.toLowerCase();
+}
+
+/* ---------- Top bar HUD ---------- */
+function Hud({ onOpen }: { onOpen: () => void }) {
+  const { lvl, streak, todayXP, game } = useBank();
+  return (
+    <button
+      type="button"
+      onClick={onOpen}
+      id="hud-xp"
+      aria-label={`等級 ${lvl.level}，${lvl.into}/${lvl.need} XP，連續 ${streak} 天，今日 ${todayXP}/${game.goal} XP。查看進度`}
+      className="flex shrink-0 items-center gap-3 rounded-full py-1 pl-1 pr-1 transition-colors hover:bg-secondary xl:pointer-events-none xl:pr-3"
+    >
+      <LevelBadge key={game.xp} level={lvl.level} size="sm" className={cn(game.xp > 0 && "animate-glow")} />
+      <span className="hidden w-[120px] flex-col gap-1 text-left md:flex">
+        <span className="tabular flex justify-between text-[11px] font-extrabold leading-none text-muted-foreground">
+          <span>XP</span>
+          <span>
+            {lvl.into}/{lvl.need}
+          </span>
+        </span>
+        <Bar value={lvl.into} max={lvl.need} fill="bg-xp" className="h-2" />
+      </span>
+      <span className={cn("flex items-center gap-0.5 text-sm font-extrabold", streak ? "text-streak" : "text-muted-foreground")}>
+        <Flame className={cn("h-5 w-5", streak > 0 && "fill-streak/25")} />
+        <span className="tabular">{streak}</span>
+      </span>
+      <Ring value={todayXP} max={game.goal} size={30} stroke={4} color={todayXP >= game.goal ? "hsl(var(--good))" : "hsl(var(--xp))"} className="hidden sm:grid">
+        <Target className="h-3.5 w-3.5 text-muted-foreground" />
+      </Ring>
+    </button>
+  );
+}
+
+/* ---------- Milestone bar for the current set ---------- */
+function Milestones({ done, total }: { done: number; total: number }) {
+  const pct = total ? (done / total) * 100 : 0;
+  const marks = [
+    { at: 25, Icon: Medal, cls: "text-[#b87333]", name: "銅" },
+    { at: 50, Icon: Medal, cls: "text-[#9aa4b5]", name: "銀" },
+    { at: 75, Icon: Trophy, cls: "text-xp", name: "金" },
+    { at: 100, Icon: Crown, cls: "text-xp", name: "制霸" },
+  ];
+  const next = marks.find((m) => pct < m.at);
+  const need = next ? Math.ceil((next.at / 100) * total) - done : 0;
+  return (
+    <div className="rounded-2xl bg-card px-5 pb-4 pt-4 shadow-card">
+      <div className="flex flex-wrap items-baseline justify-between gap-2">
+        <p className="m-0 font-extrabold">這組進度</p>
+        <p className="m-0 text-sm font-semibold text-muted-foreground">
+          {next ? (
+            <>
+              再學會 <b className="tabular text-foreground">{need}</b> 句拿到「{next.name}」
+            </>
+          ) : (
+            "全部學會了，這組被你制霸！"
+          )}
+        </p>
+      </div>
+      <div className="relative mb-7 mt-4">
+        <Bar value={done} max={total} className="h-3.5" fill="bg-good" label="這組學會比例" />
+        {marks.map((m) => {
+          const hit = pct >= m.at;
+          return (
+            <div key={m.at} className="absolute top-1/2 flex -translate-x-1/2 -translate-y-1/2 flex-col items-center" style={{ left: `min(${m.at}%, calc(100% - 14px))` }}>
+              <span
+                className={cn(
+                  "grid h-8 w-8 place-items-center rounded-full border-[3px] border-card shadow-card transition-transform",
+                  hit ? "scale-110 bg-card" : "bg-secondary",
+                )}
+                title={`${m.at}%：${m.name}`}
+              >
+                <m.Icon className={cn("h-4 w-4", hit ? m.cls : "text-muted-foreground/50")} />
+              </span>
+              <span className="tabular absolute top-9 text-[11px] font-bold text-muted-foreground">{m.at}%</span>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+export default function App() {
+  const bank = useBank();
+  const { items, learned, fav, game } = bank;
+  const [f, setF] = useState<Filters>({ tab: "chat", tone: "all", fav: false, todo: false, q: "" });
+  const [fi, setFi] = useState(0);
+  const [prefs, setPrefs] = useState<Prefs>(readPrefs);
+  const [study, setStudy] = useState<{ mode: StudyMode; pool: Item[] } | null>(null);
+  const [addOpen, setAddOpen] = useState(false);
+  const [navOpen, setNavOpen] = useState(false);
+  const [statsOpen, setStatsOpen] = useState(false);
+  const [dark, setDark] = useState(() => document.documentElement.classList.contains("dark"));
+
+  const set = (p: Partial<Filters>) => {
+    setF((o) => ({ ...o, ...p }));
+    setFi(0);
+  };
+
+  useEffect(() => {
+    document.documentElement.classList.toggle("dark", dark);
+  }, [dark]);
+
+  const filtered = useMemo(() => {
+    const q = norm(f.q).trim();
+    return items.filter((it) => {
+      if (it.tab !== f.tab) return false;
+      if (f.tone !== "all" && it.tone !== f.tone) return false;
+      if (f.fav && !fav.has(it.id)) return false;
+      if (f.todo && learned.has(it.id)) return false;
+      if (q && !norm(`${it.en} ${it.zh} ${it.ex} ${it.sec}`).includes(q)) return false;
+      return true;
+    });
+  }, [items, f, fav, learned]);
+
+  const tabItems = items.filter((i) => i.tab === f.tab);
+  const tabDone = tabItems.filter((i) => learned.has(i.id)).length;
+  const todoCount = filtered.filter((i) => !learned.has(i.id)).length;
+  const best = game.bestMatch[f.tab];
+
+  const startStudy = (mode: StudyMode) => setStudy({ mode, pool: filtered.slice() });
+
+  const modes: { key: string; name: string; sub: string; Icon: typeof Layers; tint: string; onClick: () => void }[] = [
+    {
+      key: "flash",
+      name: "單字卡",
+      sub: `翻一張 +${XP.flip} XP`,
+      Icon: Layers,
+      tint: "bg-accent text-accent-foreground",
+      onClick: () => {
+        const v = document.getElementById("viewer");
+        v?.scrollIntoView({ behavior: "smooth", block: "center" });
+        (v?.querySelector("[role=button]") as HTMLElement | null)?.focus({ preventScroll: true });
+      },
+    },
+    { key: "learn", name: "學習", sub: `還不熟 ${todoCount} 句`, Icon: Brain, tint: "bg-good-soft text-good", onClick: () => startStudy("learn") },
+    { key: "test", name: "測驗", sub: `答對 +${XP.testRight} XP`, Icon: ClipboardCheck, tint: "bg-formal-soft text-formal", onClick: () => startStudy("test") },
+    { key: "match", name: "配對", sub: best != null ? `最佳 ${fmtTime(best)}` : "挑戰計時", Icon: Puzzle, tint: "bg-streak-soft text-streak", onClick: () => startStudy("match") },
+  ];
+
+  return (
+    <>
+      <header className="sticky top-0 z-30 border-b bg-card/95 backdrop-blur supports-[backdrop-filter]:bg-card/85">
+        <div className="mx-auto flex h-16 max-w-[1400px] items-center gap-2 px-4 sm:gap-3 lg:px-6">
+          <button
+            type="button"
+            className="grid h-10 w-10 place-items-center rounded-full text-muted-foreground hover:bg-secondary hover:text-foreground lg:hidden"
+            aria-label="打開分類選單"
+            onClick={() => setNavOpen(true)}
+          >
+            <Menu className="h-5 w-5" />
+          </button>
+          <a href="#" className="flex shrink-0 items-center gap-2.5 text-foreground no-underline lg:w-[226px]" onClick={(e) => (e.preventDefault(), window.scrollTo({ top: 0 }))}>
+            <span className="grid h-9 w-9 place-items-center rounded-[10px] bg-primary text-lg font-extrabold text-primary-foreground">P</span>
+            <span className="hidden text-[19px] font-extrabold tracking-tight sm:inline">Phrase Bank</span>
+          </a>
+          <div className="relative min-w-0 flex-1 lg:max-w-[560px]">
+            <Search className="pointer-events-none absolute left-3.5 top-1/2 h-[18px] w-[18px] -translate-y-1/2 text-muted-foreground" />
+            <input
+              type="search"
+              value={f.q}
+              onChange={(e) => set({ q: e.target.value })}
+              placeholder="搜尋英文或中文"
+              aria-label="搜尋"
+              className="h-10 w-full rounded-full border-2 border-transparent bg-secondary pl-10 pr-3 text-[15px] outline-none transition-colors placeholder:text-muted-foreground focus:border-primary focus:bg-card"
+            />
+          </div>
+          <div className="ml-auto flex items-center gap-1 sm:gap-2">
+            <Hud onOpen={() => setStatsOpen(true)} />
+            <button
+              type="button"
+              onClick={() => setAddOpen(true)}
+              className="inline-flex h-10 items-center gap-1.5 rounded-[10px] bg-primary px-3 font-bold text-primary-foreground shadow-btn transition-colors hover:bg-primary-hover active:translate-y-px active:shadow-none sm:px-4"
+              aria-label="新增句子"
+            >
+              <Plus className="h-5 w-5" />
+              <span className="hidden md:inline">新增句子</span>
+            </button>
+            <button
+              type="button"
+              className="hidden h-10 w-10 place-items-center rounded-full text-muted-foreground hover:bg-secondary hover:text-foreground sm:grid"
+              aria-label={dark ? "切換成淺色模式" : "切換成深色模式"}
+              onClick={() => {
+                const d = !dark;
+                setDark(d);
+                const p = { ...prefs, theme: d ? ("dark" as const) : ("light" as const) };
+                setPrefs(p);
+                writePrefs(p);
+              }}
+            >
+              {dark ? <Sun className="h-5 w-5" /> : <Moon className="h-5 w-5" />}
+            </button>
+          </div>
+        </div>
+      </header>
+
+      <div className="mx-auto grid max-w-[1400px] gap-8 px-4 lg:grid-cols-[226px_minmax(0,1fr)] lg:px-6 xl:grid-cols-[226px_minmax(0,1fr)_296px]">
+        <aside className="scrollbar-none sticky top-16 hidden h-[calc(100vh-4rem)] overflow-y-auto pb-8 pt-7 lg:block">
+          <LeftNav f={f} set={set} />
+        </aside>
+
+        <main className="min-w-0 pb-16 pt-7">
+          <div className="mb-5 flex flex-wrap items-end justify-between gap-3">
+            <div>
+              <h1 className="m-0 text-balance text-[30px] font-extrabold leading-tight tracking-tight sm:text-[34px]">{tabName(f.tab)}</h1>
+              <p className="m-0 mt-1.5 text-sm font-semibold text-muted-foreground">
+                {tabItems.length} 個句子・已學會 <span className="tabular text-foreground">{tabDone}</span>
+                {f.q || f.tone !== "all" || f.fav || f.todo ? <>・篩選後 {filtered.length} 句</> : null}
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => setStatsOpen(true)}
+              className="flex items-center gap-2 rounded-full bg-card px-3 py-1.5 text-sm font-bold shadow-card xl:hidden"
+            >
+              <Trophy className="h-4 w-4 text-xp" /> 我的成就
+            </button>
+          </div>
+
+          <Milestones done={tabDone} total={tabItems.length} />
+
+          <div className="mt-5 grid grid-cols-2 gap-3 md:grid-cols-4">
+            {modes.map((m) => (
+              <button
+                key={m.key}
+                type="button"
+                onClick={m.onClick}
+                className="group flex items-center gap-3 rounded-xl border-b-[3px] border-transparent bg-card p-3.5 text-left shadow-card transition-all hover:-translate-y-0.5 hover:border-primary hover:shadow-lift"
+              >
+                <span className={cn("grid h-10 w-10 shrink-0 place-items-center rounded-[10px] transition-transform group-hover:rotate-[-6deg] group-hover:scale-110", m.tint)}>
+                  <m.Icon className="h-5 w-5" />
+                </span>
+                <span className="min-w-0">
+                  <span className="block font-extrabold">{m.name}</span>
+                  <span className="block truncate text-xs font-semibold text-muted-foreground">{m.sub}</span>
+                </span>
+              </button>
+            ))}
+          </div>
+
+          <section id="viewer" className="mt-6" aria-label="單字卡">
+            <Flashcards
+              deck={filtered}
+              index={Math.min(fi, Math.max(0, filtered.length - 1))}
+              setIndex={setFi}
+              front={prefs.front ?? "zh"}
+              setFront={(fr) => {
+                const p = { ...prefs, front: fr };
+                setPrefs(p);
+                writePrefs(p);
+              }}
+              active={!study && !addOpen && !navOpen && !statsOpen}
+            />
+          </section>
+
+          <div className="mt-10 flex flex-wrap items-center justify-between gap-3">
+            <h2 className="m-0 text-[21px] font-extrabold">
+              這組的句子 <span className="tabular text-base font-bold text-muted-foreground">({filtered.length})</span>
+            </h2>
+          </div>
+          <div className="mt-3 lg:hidden">
+            <FilterChips f={f} set={set} />
+          </div>
+          <TermList items={filtered} />
+        </main>
+
+        <aside className="scrollbar-none sticky top-16 hidden h-[calc(100vh-4rem)] overflow-y-auto pb-8 pt-7 xl:block" aria-label="我的進度">
+          <PlayerPanel />
+        </aside>
+      </div>
+
+      <Sheet open={navOpen} onOpenChange={setNavOpen}>
+        <SheetContent side="left" className="w-[300px] overflow-y-auto bg-background p-5">
+          <SheetHeader className="mb-4 text-left">
+            <SheetTitle>分類與章節</SheetTitle>
+            <SheetDescription className="sr-only">切換分類、跳到章節或篩選句子</SheetDescription>
+          </SheetHeader>
+          <LeftNav f={f} set={set} onJump={() => setNavOpen(false)} />
+        </SheetContent>
+      </Sheet>
+
+      <Sheet open={statsOpen} onOpenChange={setStatsOpen}>
+        <SheetContent side="right" className="w-[340px] max-w-[92vw] overflow-y-auto bg-background p-4 sm:max-w-[360px]">
+          <SheetHeader className="mb-4 text-left">
+            <SheetTitle>我的進度</SheetTitle>
+            <SheetDescription className="sr-only">等級、每日目標、連續學習和成就</SheetDescription>
+          </SheetHeader>
+          <PlayerPanel />
+        </SheetContent>
+      </Sheet>
+
+      <AddDialog open={addOpen} onOpenChange={setAddOpen} tab={f.tab} onAdded={(t: TabKey) => set({ tab: t })} />
+
+      {study && <Study mode={study.mode} pool={study.pool} tab={f.tab} onExit={() => setStudy(null)} />}
+
+      <FxLayer />
+    </>
+  );
+}
