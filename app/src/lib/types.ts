@@ -1,5 +1,5 @@
 export type Tone = "casual" | "neutral" | "formal";
-export type TabKey = "chat" | "coffee" | "vocab";
+export type TabKey = "chat" | "coffee" | "class" | "vocab";
 
 export interface Item {
   id: string;
@@ -20,7 +20,7 @@ export interface Filters {
   q: string;
 }
 
-export type StudyMode = "learn" | "test" | "match";
+export type StudyMode = "learn" | "write" | "test" | "match";
 
 export interface GameState {
   xp: number;

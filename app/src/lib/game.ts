@@ -8,6 +8,9 @@ export const XP = {
   markLearned: 5,
   addPhrase: 10,
   matchPair: 4,
+  writePerfect: 20,
+  writeClose: 15,
+  writeOverride: 10,
 } as const;
 
 /** Combo bonus: from the 3rd answer in a row, +2 per step, capped at +10. */
@@ -96,7 +99,7 @@ export interface Achievement {
   id: string;
   name: string;
   desc: string;
-  icon: "sprout" | "book" | "trophy" | "crown" | "flame" | "zap" | "target" | "timer" | "pen" | "medal" | "star" | "gem";
+  icon: "sprout" | "book" | "trophy" | "crown" | "flame" | "zap" | "target" | "timer" | "pen" | "medal" | "star" | "gem" | "mic" | "keyboard";
   check?: (c: AchCtx) => boolean;
 }
 
@@ -114,6 +117,8 @@ export const ACHIEVEMENTS: Achievement[] = [
   { id: "combo", name: "手感火燙", desc: "連續答對 10 題", icon: "zap" },
   { id: "perfect", name: "零失誤", desc: "測驗 5 題以上全對", icon: "gem" },
   { id: "fast", name: "閃電手", desc: "配對遊戲 30 秒內完成", icon: "timer" },
+  { id: "speak", name: "開口說", desc: "用語音答對一題默寫", icon: "mic" },
+  { id: "flawless", name: "一字不差", desc: "默寫 5 題以上全部完美", icon: "keyboard" },
 ];
 
 export function achById(id: string) {

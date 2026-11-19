@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useState } from "react";
-import { Brain, ClipboardCheck, Crown, Flame, Layers, Medal, Menu, Moon, Plus, Puzzle, Search, Sun, Target, Trophy } from "lucide-react";
+import { Brain, ClipboardCheck, Crown, Flame, Layers, Medal, PenLine, Menu, Moon, Plus, Puzzle, Search, Sun, Target, Trophy } from "lucide-react";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { cn } from "@/lib/utils";
 import { tabName } from "@/lib/data";
 import { XP } from "@/lib/game";
+import { speechSupported } from "@/lib/speech";
 import { useBank } from "@/lib/store";
 import type { Filters, Item, StudyMode, TabKey } from "@/lib/types";
 import { Bar, LevelBadge, Ring, fmtTime } from "@/components/game/bits";
@@ -158,22 +159,12 @@ export default function App() {
   const todoCount = filtered.filter((i) => !learned.has(i.id)).length;
   const best = game.bestMatch[f.tab];
 
+  const canSpeak = useMemo(speechSupported, []);
   const startStudy = (mode: StudyMode) => setStudy({ mode, pool: filtered.slice() });
 
   const modes: { key: string; name: string; sub: string; Icon: typeof Layers; tint: string; onClick: () => void }[] = [
-    {
-      key: "flash",
-      name: "單字卡",
-      sub: `翻一張 +${XP.flip} XP`,
-      Icon: Layers,
-      tint: "bg-accent text-accent-foreground",
-      onClick: () => {
-        const v = document.getElementById("viewer");
-        v?.scrollIntoView({ behavior: "smooth", block: "center" });
-        (v?.querySelector("[role=button]") as HTMLElement | null)?.focus({ preventScroll: true });
-      },
-    },
     { key: "learn", name: "學習", sub: `還不熟 ${todoCount} 句`, Icon: Brain, tint: "bg-good-soft text-good", onClick: () => startStudy("learn") },
+    { key: "write", name: "默寫", sub: canSpeak ? "打字或用說的" : "打字作答", Icon: PenLine, tint: "bg-xp-soft text-[hsl(30_100%_30%)] dark:text-xp", onClick: () => startStudy("write") },
     { key: "test", name: "測驗", sub: `答對 +${XP.testRight} XP`, Icon: ClipboardCheck, tint: "bg-formal-soft text-formal", onClick: () => startStudy("test") },
     { key: "match", name: "配對", sub: best != null ? `最佳 ${fmtTime(best)}` : "挑戰計時", Icon: Puzzle, tint: "bg-streak-soft text-streak", onClick: () => startStudy("match") },
   ];

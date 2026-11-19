@@ -1,5 +1,5 @@
 import type { ComponentType, ReactNode } from "react";
-import { BookOpen, Crown, Flame, Gem, Medal, PenLine, Sprout, Star, Target, Timer, Trophy, Zap } from "lucide-react";
+import { BookOpen, Crown, Flame, Gem, Keyboard, Medal, Mic, PenLine, Sprout, Star, Target, Timer, Trophy, Zap } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { Achievement } from "@/lib/game";
 import type { Tone } from "@/lib/types";
@@ -17,6 +17,8 @@ export const ACH_ICON: Record<Achievement["icon"], ComponentType<{ className?: s
   medal: Medal,
   star: Star,
   gem: Gem,
+  mic: Mic,
+  keyboard: Keyboard,
 };
 
 /** Progress bar with a striped moving fill. */

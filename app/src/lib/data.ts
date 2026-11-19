@@ -4,6 +4,7 @@ import type { Item, TabKey, Tone } from "./types";
 export const TABS: { k: TabKey; n: string; short: string }[] = [
   { k: "chat", n: "日常聊天", short: "聊天" },
   { k: "coffee", n: "Coffee chat / 面試", short: "Coffee chat" },
+  { k: "class", n: "課堂・簡報・會議", short: "課堂" },
   { k: "vocab", n: "單字", short: "單字" },
 ];
 

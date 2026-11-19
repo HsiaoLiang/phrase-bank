@@ -1,9 +1,11 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { Brain, ClipboardCheck, Flame, Puzzle, RotateCcw, Star, Timer, Volume2, X, Zap } from "lucide-react";
+import { Brain, ClipboardCheck, Flame, Lightbulb, Mic, PenLine, Puzzle, RotateCcw, Square, Star, Timer, Volume2, X, Zap } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { shuffle } from "@/lib/data";
 import { XP, comboBonus } from "@/lib/game";
 import { confetti, pointOf, speak, toast } from "@/lib/fx";
+import { bestOf, grade, hintOf, type GradeResult } from "@/lib/grade";
+import { speechSupported, useSpeech } from "@/lib/speech";
 import { useBank } from "@/lib/store";
 import type { Item, StudyMode, TabKey } from "@/lib/types";
 import { IconBtn, ToneTag, fmtTime } from "./game/bits";
@@ -39,6 +41,7 @@ function Shell({
   const label = count ?? `${Math.min(i + 1, n)} / ${n}`;
   const meta = {
     learn: { name: "學習", Icon: Brain },
+    write: { name: "默寫", Icon: PenLine },
     test: { name: "測驗", Icon: ClipboardCheck },
     match: { name: "配對", Icon: Puzzle },
   }[mode];
@@ -539,6 +542,302 @@ function Test({ pool, all, onExit }: { pool: Item[]; all: Item[]; onExit: () => 
   );
 }
 
+/* ---------- Write (type or speak, graded leniently) ---------- */
+const LEVEL_UI: Record<GradeResult["level"], { title: string; cls: string; ok: boolean }> = {
+  perfect: { title: "完美！", cls: "border-good bg-good-soft text-good", ok: true },
+  close: { title: "很接近，算你對", cls: "border-good bg-good-soft text-good", ok: true },
+  partial: { title: "差一些，看看漏了哪裡", cls: "border-xp bg-xp-soft text-[hsl(30_100%_30%)] dark:text-xp", ok: false },
+  miss: { title: "再加油", cls: "border-bad bg-bad-soft text-bad", ok: false },
+};
+
+interface WriteResult {
+  g: GradeResult;
+  text: string;
+  spoken: boolean;
+  skipped: boolean;
+  counted: boolean;
+}
+
+function Write({ pool, onExit }: { pool: Item[]; onExit: () => void }) {
+  const { setLearned, gain, recordCombo, award } = useBank();
+  const [round, setRound] = useState(0);
+  const deck = useMemo(() => shuffle(pool), [pool, round]); // eslint-disable-line react-hooks/exhaustive-deps
+  const [i, setI] = useState(0);
+  const [input, setInput] = useState("");
+  const [hint, setHint] = useState(false);
+  const [res, setRes] = useState<WriteResult | null>(null);
+  const [tally, setTally] = useState({ perfect: 0, close: 0, wrong: 0 });
+  const [misses, setMisses] = useState<Item[]>([]);
+  const [combo, setCombo] = useState(0);
+  const [xp, setXp] = useState(0);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const nextRef = useRef<HTMLButtonElement>(null);
+  const canSpeak = useMemo(speechSupported, []);
+  const n = deck.length;
+  const it = deck[i];
+
+  const finish = (g: GradeResult, text: string, spoken: boolean) => {
+    if (!it || res) return;
+    const ok = LEVEL_UI[g.level].ok;
+    const at = (() => {
+      const r = inputRef.current?.getBoundingClientRect();
+      return r ? { x: r.left + r.width / 2, y: r.top } : null;
+    })();
+    if (ok) {
+      const c = combo + 1;
+      setCombo(c);
+      recordCombo(c);
+      let amt: number = g.level === "perfect" ? XP.writePerfect : XP.writeClose;
+      if (hint) amt = Math.ceil(amt / 2);
+      amt += comboBonus(c);
+      setXp((x) => x + amt);
+      gain(amt, at, c >= 3 ? `+${amt} XP · ${c} 連擊` : undefined);
+      setLearned(it.id, true, null, false);
+      if (spoken) award("speak");
+      setTally((t) => ({ ...t, [g.level]: t[g.level as "perfect" | "close"] + 1 }));
+    } else {
+      setCombo(0);
+      setLearned(it.id, false);
+      setTally((t) => ({ ...t, wrong: t.wrong + 1 }));
+      setMisses((m) => [...m, it]);
+    }
+    setRes({ g, text, spoken, skipped: false, counted: ok });
+  };
+
+  const submit = (text: string) => {
+    if (!it || res || !text.trim()) return;
+    finish(grade(text, it.en), text, false);
+  };
+
+  const speech = useSpeech((alts) => {
+    if (!it || res) return;
+    const b = bestOf(alts, it.en);
+    if (!b) return;
+    setInput(b.text);
+    finish(b.g, b.text, true);
+  });
+
+  const skip = () => {
+    if (!it || res) return;
+    speech.stop();
+    setCombo(0);
+    setLearned(it.id, false);
+    setTally((t) => ({ ...t, wrong: t.wrong + 1 }));
+    setMisses((m) => [...m, it]);
+    setRes({ g: grade("", it.en), text: "", spoken: false, skipped: true, counted: false });
+  };
+
+  const override = (e: React.MouseEvent<HTMLButtonElement>) => {
+    if (!it || !res || res.counted) return;
+    const amt = XP.writeOverride;
+    setXp((x) => x + amt);
+    gain(amt, pointOf(e));
+    setLearned(it.id, true, null, false);
+    setTally((t) => ({ ...t, close: t.close + 1, wrong: t.wrong - 1 }));
+    setMisses((m) => m.filter((x) => x.id !== it.id));
+    setRes({ ...res, counted: true });
+  };
+
+  const next = () => {
+    if (!res) return;
+    if (i + 1 >= n && n >= 5 && tally.perfect === n) award("flawless");
+    setI((v) => v + 1);
+    setInput("");
+    setHint(false);
+    setRes(null);
+  };
+
+  const restart = () => {
+    setRound((r) => r + 1);
+    setI(0);
+    setInput("");
+    setHint(false);
+    setRes(null);
+    setTally({ perfect: 0, close: 0, wrong: 0 });
+    setMisses([]);
+    setCombo(0);
+    setXp(0);
+  };
+
+  useEffect(() => {
+    if (res) nextRef.current?.focus({ preventScroll: true });
+    else inputRef.current?.focus({ preventScroll: true });
+  }, [res, i]);
+
+  useKeys((e) => {
+    if (e.key === "Escape") {
+      if (speech.listening) speech.stop();
+      else onExit();
+    }
+  });
+
+  let body: ReactNode;
+  if (!n) body = <Empty onExit={onExit} />;
+  else if (i >= n) {
+    const right = tally.perfect + tally.close;
+    const ratio = right / n;
+    body = (
+      <Result
+        stars={ratio >= 0.9 ? 3 : ratio >= 0.6 ? 2 : 1}
+        title={tally.perfect === n ? "全部完美，一字不差" : `答對 ${right} / ${n}`}
+        xp={xp}
+        stats={[
+          [tally.perfect, "完美"],
+          [tally.close, "接近"],
+          [tally.wrong, "答錯"],
+        ]}
+        actions={
+          <>
+            <button ref={nextRef} type="button" className={btnPrimary} onClick={restart}>
+              <RotateCcw className="h-5 w-5" /> 再寫一輪
+            </button>
+            <button type="button" className={btnPlain} onClick={onExit}>
+              回到首頁
+            </button>
+          </>
+        }
+      >
+        {misses.length > 0 && (
+          <div className="flex w-full flex-col gap-2 text-left">
+            <p className="m-0 text-[13px] font-extrabold text-muted-foreground">要再練的（已標成還不熟）</p>
+            {misses.map((m) => (
+              <div key={m.id} className="rounded-xl bg-secondary px-4 py-2.5">
+                <b className="block">{m.en}</b>
+                <span className="text-muted-foreground">{m.zh}</span>
+              </div>
+            ))}
+          </div>
+        )}
+      </Result>
+    );
+  } else {
+    const ui = res ? LEVEL_UI[res.g.level] : null;
+    body = (
+      <>
+        <div key={i} className={cn("flex flex-col gap-5 rounded-3xl bg-card p-6 shadow-lift sm:p-8", res && !res.counted ? "animate-shake" : "animate-rise")}>
+          <QLabel it={it} />
+          <div>
+            <p className="m-0 text-[13px] font-extrabold text-muted-foreground">用英文寫出來或說出來</p>
+            <p className="m-0 mt-1 text-balance text-[24px] font-bold leading-snug sm:text-[28px]">{it.zh}</p>
+          </div>
+
+          {hint && !res && (
+            <p className="m-0 animate-rise rounded-xl bg-secondary px-4 py-2.5 font-mono text-[17px] tracking-[.12em] text-muted-foreground" aria-label="提示">
+              {hintOf(it.en)}
+            </p>
+          )}
+
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              submit(input);
+            }}
+            className="flex flex-col gap-3"
+          >
+            <div className="relative">
+              <input
+                ref={inputRef}
+                value={speech.listening ? speech.interim : input}
+                onChange={(e) => setInput(e.target.value)}
+                readOnly={!!res || speech.listening}
+                placeholder={speech.listening ? "正在聽……說完停一下就會送出" : "輸入英文，按 Enter 送出"}
+                aria-label="你的答案"
+                autoComplete="off"
+                autoCapitalize="off"
+                autoCorrect="off"
+                spellCheck={false}
+                className={cn(
+                  "h-14 w-full rounded-xl border-2 bg-secondary px-4 text-[17px] font-semibold outline-none transition-colors focus:border-primary focus:bg-card",
+                  canSpeak && "pr-16",
+                  res && ui?.cls,
+                  speech.listening && "border-bad bg-card",
+                )}
+              />
+              {canSpeak && !res && (
+                <button
+                  type="button"
+                  onClick={() => (speech.listening ? speech.stop() : speech.start())}
+                  aria-label={speech.listening ? "停止錄音" : "用說的回答"}
+                  title={speech.listening ? "停止錄音" : "用說的回答"}
+                  className={cn(
+                    "absolute right-2 top-1/2 grid h-10 w-10 -translate-y-1/2 place-items-center rounded-full transition-colors",
+                    speech.listening ? "bg-bad text-white" : "bg-card text-primary shadow-card hover:bg-accent",
+                  )}
+                >
+                  {speech.listening && <span className="absolute inset-0 animate-ping rounded-full bg-bad/40" aria-hidden="true" />}
+                  {speech.listening ? <Square className="relative h-4 w-4 fill-current" /> : <Mic className="h-5 w-5" />}
+                </button>
+              )}
+            </div>
+            {!res && (
+              <div className="flex flex-wrap gap-2.5">
+                <button type="button" className={cn(btnPlain, "flex-none basis-auto px-4 py-2.5 text-[15px]")} onClick={() => setHint(true)} disabled={hint}>
+                  <Lightbulb className="h-4 w-4" /> 提示 <span className="text-xs font-extrabold text-muted-foreground">XP 減半</span>
+                </button>
+                <button type="button" className={cn(btnPlain, "flex-none basis-auto px-4 py-2.5 text-[15px]")} onClick={skip}>
+                  不知道
+                </button>
+                <button type="submit" className={cn(btnPrimary, "py-2.5 text-[15px]")} disabled={!input.trim() || speech.listening}>
+                  送出
+                </button>
+              </div>
+            )}
+          </form>
+
+          {res && ui && (
+            <div className="flex animate-rise flex-col gap-3">
+              <div className={cn("flex flex-wrap items-center justify-between gap-2 rounded-xl border-2 px-4 py-2.5 font-extrabold", res.skipped ? "border-border bg-secondary text-muted-foreground" : res.counted && !ui.ok ? LEVEL_UI.close.cls : ui.cls)}>
+                <span>{res.skipped ? "沒關係，看一下答案" : res.counted && !ui.ok ? "好，算你對" : ui.title}</span>
+                {!res.skipped && (
+                  <span className="tabular text-sm font-bold opacity-80">
+                    {res.spoken && "🎤 "}相似度 {Math.round(res.g.score * 100)}%
+                  </span>
+                )}
+              </div>
+              <div>
+                <p className="m-0 text-[13px] font-extrabold text-muted-foreground">正確答案{res.g.level !== "perfect" && !res.skipped && "（標色的是你漏掉或不一樣的字）"}</p>
+                <div className="mt-1 flex items-center gap-1">
+                  <p className="m-0 text-[20px] font-bold leading-snug">
+                    {res.g.words.map((w, k) => (
+                      <span key={k}>
+                        <span className={cn(w.hit === false && !res.skipped && "rounded bg-xp-soft px-0.5 text-[hsl(30_100%_30%)] underline decoration-xp decoration-2 underline-offset-4 dark:text-xp")}>{w.text}</span>{" "}
+                      </span>
+                    ))}
+                  </p>
+                  <IconBtn label="朗讀英文" onClick={() => speak(it.en)}>
+                    <Volume2 className="h-5 w-5" />
+                  </IconBtn>
+                </div>
+                {it.ex && <p className="m-0 mt-1 text-muted-foreground">{it.ex}</p>}
+              </div>
+              <div className="flex flex-wrap gap-2.5">
+                {!res.counted && !res.skipped && (
+                  <button type="button" className={btnPlain} onClick={override}>
+                    其實我答對了 <span className="text-sm font-extrabold text-muted-foreground">+{XP.writeOverride}</span>
+                  </button>
+                )}
+                <button ref={nextRef} type="button" className={btnPrimary} onClick={next}>
+                  {i + 1 >= n ? "看結果" : "下一題"}
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+        <p className="m-0 mt-4 hidden text-center text-[13px] text-muted-foreground sm:block">
+          大小寫、標點、縮寫、英美拼法和小錯字都不扣分　<Kbd>Enter</Kbd> 送出／下一題　<Kbd>Esc</Kbd> 離開
+        </p>
+        {!canSpeak && <p className="m-0 mt-2 text-center text-[13px] text-muted-foreground">這個瀏覽器不支援語音輸入，用 Chrome、Edge 或 Safari 就能用說的。</p>}
+      </>
+    );
+  }
+
+  return (
+    <Shell mode="write" i={i} n={n} combo={combo} xp={xp} onExit={onExit}>
+      {body}
+    </Shell>
+  );
+}
+
 /* ---------- Match ---------- */
 interface Tile {
   key: string;
@@ -721,6 +1020,7 @@ export function Study({ mode, pool, tab, onExit }: { mode: StudyMode; pool: Item
     };
   }, []);
   if (mode === "learn") return <Learn pool={pool} onExit={onExit} />;
+  if (mode === "write") return <Write pool={pool} onExit={onExit} />;
   if (mode === "test") return <Test pool={pool} all={items} onExit={onExit} />;
   return <Match pool={pool} all={items} tab={tab} onExit={onExit} />;
 }
