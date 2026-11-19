@@ -38,14 +38,14 @@ function Toasts() {
       toasts.on((v) => {
         setT(v);
         window.clearTimeout(timer.current);
-        timer.current = window.setTimeout(() => setT(null), 1600);
+        timer.current = window.setTimeout(() => setT(null), Math.max(1600, v.text.length * 90));
       }),
     [],
   );
   return (
     <div role="status" aria-live="polite" className="pointer-events-none fixed inset-x-0 bottom-6 z-[80] flex justify-center px-4">
       {t && (
-        <div key={t.id} className="animate-rise rounded-full bg-foreground px-4 py-2 text-sm font-semibold text-background shadow-lift">
+        <div key={t.id} className="max-w-md animate-rise rounded-2xl bg-foreground px-4 py-2 text-center text-sm font-semibold text-background shadow-lift">
           {t.text}
         </div>
       )}

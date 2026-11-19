@@ -73,9 +73,13 @@ export function useSpeech(onFinal: (alts: string[]) => void) {
       }
     };
     r.onerror = (e) => {
-      if (e.error === "not-allowed" || e.error === "service-not-allowed") toast("沒有麥克風權限，請在瀏覽器設定允許");
+      if (e.error === "not-allowed") toast("沒有麥克風權限，請在瀏覽器的網站設定裡允許麥克風");
+      else if (e.error === "service-not-allowed")
+        toast("語音辨識被系統擋下。Mac 請到「系統設定 → 鍵盤 → 聽寫」打開聽寫，或改用鍵盤的聽寫功能輸入");
       else if (e.error === "no-speech") toast("沒聽到聲音，再試一次");
-      else if (e.error === "network") toast("語音辨識需要網路連線");
+      else if (e.error === "audio-capture") toast("找不到麥克風，請確認麥克風有接好");
+      else if (e.error === "network")
+        toast(navigator.onLine ? "這個瀏覽器的語音辨識服務用不了（Brave、Arc 常見），請改用 Chrome、Edge 或 Safari，或用鍵盤的聽寫功能" : "語音辨識需要網路連線");
       else if (e.error !== "aborted") toast("語音辨識出錯了，再試一次");
     };
     r.onend = () => {
