@@ -45,10 +45,10 @@ export interface GameState {
   frozen: string[];
   quests: { date: string; progress: Record<string, number>; claimed: string[] };
   /** path node id -> completion */
-  path: Record<string, { done: boolean; perfect: boolean; plays: number }>;
+  path: Record<string, { done: boolean; perfect: boolean; plays: number; level?: number }>;
   /** item id -> times answered wrong (decreases when answered right in review) */
   mistakes: Record<string, number>;
   /** double XP active until this timestamp (ms) */
   boostUntil: number;
-  settings: { hearts: boolean; sound: boolean };
+  settings: { hearts: boolean; sound: boolean; level: 1 | 2 };
 }

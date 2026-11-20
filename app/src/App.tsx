@@ -17,6 +17,7 @@ import { Study } from "@/components/Study";
 import { AddDialog } from "@/components/AddDialog";
 import { Lesson } from "@/components/Lesson";
 import { PathView } from "@/components/PathView";
+import type { Level } from "@/lib/levels";
 
 const LS_PREFS = "phraseBank.prefs";
 interface Prefs {
@@ -139,7 +140,7 @@ export default function App() {
   const [fi, setFi] = useState(0);
   const [prefs, setPrefs] = useState<Prefs>(readPrefs);
   const [study, setStudy] = useState<{ mode: StudyMode; pool: Item[] } | null>(null);
-  const [lesson, setLesson] = useState<{ title: string; items: Item[]; nodeId?: string; review?: boolean } | null>(null);
+  const [lesson, setLesson] = useState<{ title: string; items: Item[]; nodeId?: string; review?: boolean; level?: Level; boss?: boolean; nonce: number } | null>(null);
   const view = prefs.view ?? "path";
   const setView = (v: "path" | "library") => {
     const p = { ...prefs, view: v };
@@ -299,7 +300,7 @@ export default function App() {
           {view === "path" ? (
             <PathView
               tab={f.tab}
-              onStart={(title, its, nodeId, review) => setLesson({ title, items: its, nodeId, review })}
+              onStart={(title, its, opts) => setLesson({ title, items: its, ...opts, nonce: Date.now() })}
               onBrowse={(sec) => {
                 set({ q: sec });
                 setView("library");
@@ -405,7 +406,19 @@ export default function App() {
       <AddDialog open={addOpen} onOpenChange={setAddOpen} tab={f.tab} onAdded={(t: TabKey) => set({ tab: t })} />
 
       {study && <Study mode={study.mode} pool={study.pool} tab={f.tab} onExit={() => setStudy(null)} />}
-      {lesson && <Lesson key={lesson.title + lesson.items.length} {...lesson} onExit={() => setLesson(null)} />}
+      {lesson && (
+        <Lesson
+          key={lesson.nonce}
+          title={lesson.title}
+          items={lesson.items}
+          nodeId={lesson.nodeId}
+          review={lesson.review}
+          level={lesson.level}
+          boss={lesson.boss}
+          onExit={() => setLesson(null)}
+          onRetry={() => setLesson({ ...lesson, nonce: Date.now() })}
+        />
+      )}
 
       <nav className="fixed inset-x-0 bottom-0 z-20 grid grid-cols-3 border-t-2 bg-card pb-[env(safe-area-inset-bottom)] lg:hidden" aria-label="主選單">
         {(

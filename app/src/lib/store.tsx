@@ -216,6 +216,17 @@ function useBankState() {
   const pathStats = useMemo(() => {
     let lessons = 0;
     let units = 0;
+    let hard = 0;
+    let legend = 0;
+    let boss = 0;
+    for (const [id, p] of Object.entries(game.path)) {
+      if (!p.done) continue;
+      if (id.startsWith("B:")) boss++;
+      else if (id.startsWith("L:")) {
+        if ((p.level ?? 1) >= 2) hard++;
+        if ((p.level ?? 1) >= 3) legend++;
+      }
+    }
     for (const t of TABS)
       for (const u of buildPath(items, t.k)) {
         const ls = u.nodes.filter((n) => n.type === "lesson");
@@ -223,10 +234,13 @@ function useBankState() {
         lessons += done;
         if (ls.length && done === ls.length) units++;
       }
-    return { lessons, units };
+    return { lessons, units, hard, legend, boss };
   }, [items, game.path]);
   useEffect(() => {
     const ctx = {
+      hard: pathStats.hard,
+      legend: pathStats.legend,
+      boss: pathStats.boss,
       lessons: pathStats.lessons,
       units: pathStats.units,
       gems: game.gems,
@@ -393,10 +407,14 @@ function useBankState() {
     if (at) confetti({ x: at.x, y: at.y, count: 50, spread: 0.6 });
   }, []);
 
-  const completeNode = useCallback((id: string, perfect: boolean) => {
+  const completeNode = useCallback((id: string, perfect: boolean, level = 1) => {
     setGame((g) => {
       const cur = g.path[id];
-      return { ...g, path: { ...g.path, [id]: { done: true, perfect: perfect || !!cur?.perfect, plays: (cur?.plays ?? 0) + 1 } } };
+      const prevLevel = cur?.level ?? (cur?.done ? 1 : 0);
+      return {
+        ...g,
+        path: { ...g.path, [id]: { done: true, perfect: perfect || !!cur?.perfect, plays: (cur?.plays ?? 0) + 1, level: Math.max(prevLevel, level) } },
+      };
     });
   }, []);
 
@@ -420,7 +438,7 @@ function useBankState() {
     });
   }, []);
 
-  const setSetting = useCallback((key: keyof GameState["settings"], value: boolean) => {
+  const setSetting = useCallback(<K extends keyof GameState["settings"]>(key: K, value: GameState["settings"][K]) => {
     setGame((g) => ({ ...g, settings: { ...g.settings, [key]: value } }));
   }, []);
 

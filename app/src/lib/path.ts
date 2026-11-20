@@ -2,7 +2,7 @@ import type { Item, TabKey } from "./types";
 
 export interface PathNode {
   id: string;
-  type: "lesson" | "chest";
+  type: "lesson" | "boss" | "chest";
   tab: TabKey;
   sec: string;
   /** lesson number within the unit, from 1 */
@@ -44,6 +44,7 @@ export function buildPath(items: Item[], tab: TabKey): Unit[] {
     chunk(u.items).forEach((group, i) =>
       u.nodes.push({ id: `L:${tab}:${u.sec}:${i}`, type: "lesson", tab, sec: u.sec, n: i + 1, items: group }),
     );
+    if (u.items.length >= 4) u.nodes.push({ id: `B:${tab}:${u.sec}`, type: "boss", tab, sec: u.sec, n: 0, items: u.items });
     u.nodes.push({ id: `C:${tab}:${u.sec}`, type: "chest", tab, sec: u.sec, n: 0, items: [] });
   }
   return units;
@@ -53,7 +54,8 @@ export type NodeState = "done" | "current" | "locked";
 
 /**
  * A lesson unlocks once the lesson before it (in path order) is done; the first unfinished one is "current".
- * Chests never block the path: each one opens as soon as every lesson in its unit is done.
+ * Unit tests and chests never block the path: the unit test opens once every lesson in its unit is done,
+ * and the chest opens once the unit test is passed (or straight away for units too small to have one).
  */
 export function nodeStates(units: Unit[], progress: Record<string, { done: boolean }>) {
   const map = new Map<string, NodeState>();
@@ -61,10 +63,16 @@ export function nodeStates(units: Unit[], progress: Record<string, { done: boole
   let currentSet = false;
   for (const u of units) {
     let unitDone = true;
+    let bossDone = true;
     for (const nd of u.nodes) {
       const done = !!progress[nd.id]?.done;
-      if (nd.type === "chest") {
+      if (nd.type === "boss") {
+        bossDone = done;
         map.set(nd.id, done ? "done" : unitDone ? "current" : "locked");
+        continue;
+      }
+      if (nd.type === "chest") {
+        map.set(nd.id, done ? "done" : unitDone && bossDone ? "current" : "locked");
         continue;
       }
       if (!done) unitDone = false;

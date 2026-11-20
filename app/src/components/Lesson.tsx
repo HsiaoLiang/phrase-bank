@@ -1,20 +1,31 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { Check, Clock, Flame, Gem, Heart, HeartCrack, Infinity as InfinityIcon, Snowflake, Target, Turtle, Volume2, X, Zap } from "lucide-react";
+import { Check, Clock, Flame, Gem, Heart, HeartCrack, Infinity as InfinityIcon, RotateCcw, Shield, ShieldX, Snowflake, Target, Timer, Turtle, Volume2, X, Zap } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { shuffle } from "@/lib/data";
 import { GEMS, MAX_HEARTS, SHOP, STREAK_MIN, lastNDays } from "@/lib/game";
 import { confetti, speak } from "@/lib/fx";
-import { grade, norm } from "@/lib/grade";
+import { grade, norm, similarity } from "@/lib/grade";
+import { rulesFor, type Level, type Rules } from "@/lib/levels";
 import { sfx } from "@/lib/sound";
 import { useBank } from "@/lib/store";
 import type { Item } from "@/lib/types";
 import { fmtTime } from "./game/bits";
 
 /* ---------- exercises ---------- */
-type Kind = "pick-en" | "pick-zh" | "build" | "type" | "listen";
-type Ex =
-  | { key: string; kind: Kind; item: Item; options: Item[]; tiles: { id: number; w: string }[]; second: boolean }
-  | { key: string; kind: "pairs"; items: Item[] };
+type Kind = "pick-en" | "pick-zh" | "build" | "type" | "listen" | "cloze" | "spot" | "dictation";
+interface ItemEx {
+  key: string;
+  kind: Kind;
+  item: Item;
+  options: Item[];
+  tiles: { id: number; w: string }[];
+  second: boolean;
+  /** seconds allowed (0 = untimed) */
+  limit: number;
+  cloze?: { before: string; after: string; answer: string };
+  spot?: { words: string[]; wrong: number; original: string };
+}
+type Ex = ItemEx | { key: string; kind: "pairs"; items: Item[]; limit: number };
 
 const canTTS = () => typeof window !== "undefined" && "speechSynthesis" in window;
 
@@ -25,14 +36,94 @@ export function tokens(en: string) {
     .filter((w) => w && /\w/.test(w));
 }
 
+const STOP = new Set("a an the to of and or but so is am are was were be i you we it this that in on at for with by as do my your our me".split(" "));
+const lowerToks = (s: string) => tokens(s).map((w) => w.toLowerCase());
+
+/** Rank other items by how easily they could be confused with this one. */
+function confusable(item: Item, src: Item[]) {
+  const mine = new Set(lowerToks(item.en));
+  return src
+    .map((x) => {
+      const t = lowerToks(x.en);
+      const overlap = t.filter((w) => mine.has(w)).length / Math.max(1, new Set([...t, ...mine]).size);
+      const len = 1 - Math.min(1, Math.abs(x.en.length - item.en.length) / Math.max(item.en.length, 8));
+      const score = overlap * 2 + len + (x.sec === item.sec ? 0.6 : 0) + similarity(x.en.toLowerCase(), item.en.toLowerCase()) + Math.random() * 0.35;
+      return { x, score };
+    })
+    .sort((a, b) => b.score - a.score)
+    .map((r) => r.x);
+}
+
+/** Blank the phrase (or an inflected form of a single word) out of its example sentence. */
+function makeCloze(item: Item): ItemEx["cloze"] | undefined {
+  const ex = item.ex;
+  if (!ex) return;
+  const target = item.en.replace(/\.{3}|…/g, "").replace(/[\s,.!?;:—-]+$/g, "").trim();
+  if (!target) return;
+  const i = ex.toLowerCase().indexOf(target.toLowerCase());
+  if (i >= 0 && ex.length - target.length >= 8) return { before: ex.slice(0, i), after: ex.slice(i + target.length), answer: ex.slice(i, i + target.length) };
+  const words = tokens(target);
+  if (words.length === 1 && target.length >= 4) {
+    const stem = target.toLowerCase().replace(/e$/, "");
+    const m = ex.match(new RegExp(`\\b(${stem.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}[a-z]{0,4})\\b`, "i"));
+    if (m && m.index !== undefined) return { before: ex.slice(0, m.index), after: ex.slice(m.index + m[1].length), answer: m[1] };
+  }
+}
+
+/** Swap one content word for a plausible wrong one; the player has to find it. */
+function makeSpot(item: Item, src: Item[]): ItemEx["spot"] | undefined {
+  const words = item.en.split(/\s+/).filter(Boolean);
+  if (words.length < 4) return;
+  const bare = (w: string) => w.replace(/^[^\w']+|[^\w']+$/g, "");
+  const idx = shuffle(words.map((_, i) => i)).find((i) => {
+    const b = bare(words[i]).toLowerCase();
+    return b.length >= 3 && !STOP.has(b) && /^[a-z']+$/i.test(b);
+  });
+  if (idx === undefined) return;
+  const orig = bare(words[idx]);
+  const have = new Set(words.map((w) => bare(w).toLowerCase()));
+  for (const x of confusable(item, src).slice(0, 25))
+    for (const w of shuffle(tokens(x.en))) {
+      const lw = w.toLowerCase();
+      if (lw.length >= 3 && !STOP.has(lw) && !have.has(lw) && /^[a-z']+$/i.test(w) && Math.abs(w.length - orig.length) <= 5) {
+        const rep = /^[A-Z]/.test(orig) ? w[0].toUpperCase() + w.slice(1) : lw;
+        const out = words.slice();
+        out[idx] = words[idx].replace(orig, rep);
+        return { words: out, wrong: idx, original: orig };
+      }
+    }
+}
+
+function timeLimit(kind: Ex["kind"], item: Item | null, rules: Rules) {
+  if (!rules.timer) return 0;
+  const strict = rules.grading === "strict";
+  const chars = item ? item.en.length : 0;
+  const clamp = (v: number, lo: number, hi: number) => Math.round(Math.min(hi, Math.max(lo, v)));
+  switch (kind) {
+    case "pick-en":
+    case "pick-zh":
+    case "spot":
+      return strict ? 12 : 15;
+    case "build":
+      return clamp(12 + tokens(item!.en).length * 1.6, 15, 40);
+    case "pairs":
+      return 35;
+    case "dictation":
+      return clamp(15 + (item?.ex.length ?? 40) * 0.5, 25, 60);
+    default:
+      return strict ? clamp(8 + chars * 0.35, 12, 30) : clamp(12 + chars * 0.45, 15, 40);
+  }
+}
+
 let exSeq = 0;
-function makeEx(kind: Kind, item: Item, pool: Item[], second: boolean): Ex {
+function makeEx(kind: Kind, item: Item, pool: Item[], second: boolean, level: Level, rules: Rules): ItemEx {
   const same = pool.filter((x) => x.id !== item.id && x.tab === item.tab);
   const src = same.length >= 3 ? same : pool.filter((x) => x.id !== item.id);
   const field = kind === "pick-zh" ? "zh" : "en";
   const seen = new Set([item[field]]);
   const options: Item[] = [];
-  for (const x of shuffle(src)) {
+  const ranked = level >= 2 ? confusable(item, src).slice(0, 10) : shuffle(src);
+  for (const x of shuffle(ranked)) {
     if (options.length >= 3) break;
     if (!seen.has(x[field])) {
       seen.add(x[field]);
@@ -44,33 +135,101 @@ function makeEx(kind: Kind, item: Item, pool: Item[], second: boolean): Ex {
     const words = tokens(item.en);
     const lower = new Set(words.map((w) => w.toLowerCase()));
     const extra: string[] = [];
-    for (const x of shuffle(src))
+    const want = level >= 2 ? 6 : 3;
+    const from = level >= 2 ? confusable(item, src).slice(0, 15) : shuffle(src);
+    for (const x of from)
       for (const w of shuffle(tokens(x.en)))
-        if (extra.length < 3 && !lower.has(w.toLowerCase()) && w.length > 1) {
+        if (extra.length < want && !lower.has(w.toLowerCase()) && w.length > 1) {
           extra.push(w.toLowerCase());
           lower.add(w.toLowerCase());
         }
     tiles = shuffle([...words, ...extra]).map((w, i) => ({ id: i, w }));
   }
-  return { key: `${kind}-${item.id}-${++exSeq}`, kind, item, options: shuffle([...options, item]), tiles, second };
+  const ex: ItemEx = { key: `${kind}-${item.id}-${++exSeq}`, kind, item, options: shuffle([...options, item]), tiles, second, limit: timeLimit(kind, item, rules) };
+  if (kind === "cloze") ex.cloze = makeCloze(item);
+  if (kind === "spot") ex.spot = makeSpot(item, src);
+  // fall back when a sentence can't be turned into this exercise
+  if ((kind === "cloze" && !ex.cloze) || (kind === "spot" && !ex.spot) || (kind === "dictation" && !item.ex)) {
+    ex.kind = kind === "spot" ? "pick-en" : "type";
+    ex.limit = timeLimit(ex.kind, item, rules);
+  }
+  return ex;
 }
 
-function buildLesson(items: Item[], pool: Item[]): Ex[] {
+function pickWeighted<T>(opts: [T, number][]): T {
+  const total = opts.reduce((s, o) => s + o[1], 0);
+  let r = Math.random() * total;
+  for (const [v, w] of opts) if ((r -= w) <= 0) return v;
+  return opts[opts.length - 1][0];
+}
+
+function buildLesson(items: Item[], pool: Item[], level: Level, boss: boolean): Ex[] {
   const tts = canTTS();
+  const rules = rulesFor(level, boss);
+  const mk = (k: Kind, it: Item, second: boolean) => makeEx(k, it, pool, second, level, rules);
+  const n = (it: Item) => tokens(it.en).length;
+  const canDictate = (it: Item) => tts && !!it.ex && tokens(it.ex).length >= 4 && tokens(it.ex).length <= 20;
+  const pairs = (its: Item[]): Ex[] => (its.length >= 3 ? [{ key: `pairs-${++exSeq}`, kind: "pairs", items: shuffle(its).slice(0, 5), limit: timeLimit("pairs", null, rules) }] : []);
+
+  if (boss) {
+    const picked = shuffle(items).slice(0, 10);
+    const qs = picked.map((it) =>
+      mk(
+        pickWeighted<Kind>([
+          ["cloze", makeCloze(it) ? 3 : 0],
+          ["spot", n(it) >= 4 ? 2 : 0],
+          ["build", n(it) >= 3 && n(it) <= 12 ? 2 : 0],
+          ["listen", tts ? 2 : 0],
+          ["type", 2],
+        ]),
+        it,
+        true,
+      ),
+    );
+    const dict = shuffle(picked.filter(canDictate)).slice(0, 2).map((it) => mk("dictation", it, true));
+    return shuffle([...qs, ...dict]);
+  }
+
+  if (level === 3) {
+    const pass1 = shuffle(items).map((it) => mk(makeCloze(it) ? "cloze" : "type", it, false));
+    const pass2 = shuffle(items).map((it) => mk(tts && Math.random() < 0.5 ? "listen" : "type", it, true));
+    const dict = shuffle(items.filter(canDictate)).slice(0, 2).map((it) => mk("dictation", it, true));
+    return [...pass1, ...pass2, ...dict];
+  }
+
+  if (level === 2) {
+    const pass1 = shuffle(items).map((it) =>
+      mk(
+        pickWeighted<Kind>([
+          ["cloze", makeCloze(it) ? 4 : 0],
+          ["spot", n(it) >= 4 ? 3 : 0],
+          ["pick-en", 3],
+        ]),
+        it,
+        false,
+      ),
+    );
+    const pass2 = shuffle(items).map((it) => {
+      const len = n(it);
+      if (len >= 3 && len <= 12) return mk(tts && Math.random() < 0.3 ? "listen" : "build", it, true);
+      return mk(tts && Math.random() < 0.35 ? "listen" : "type", it, true);
+    });
+    return [...pass1, ...pairs(items), ...pass2];
+  }
+
   const pass1 = shuffle(items).map((it) => {
-    const word = tokens(it.en).length <= 3;
+    const word = n(it) <= 3;
     const k: Kind = word ? (Math.random() < 0.6 ? "pick-zh" : "pick-en") : Math.random() < 0.65 ? "pick-en" : "pick-zh";
-    return makeEx(k, it, pool, false);
+    return mk(k, it, false);
   });
   const pass2 = shuffle(items).map((it) => {
-    const n = tokens(it.en).length;
+    const len = n(it);
     let k: Kind;
-    if (n >= 3 && n <= 12) k = tts && Math.random() < 0.25 ? "listen" : "build";
-    else k = tts && n <= 6 && Math.random() < 0.3 ? "listen" : "type";
-    return makeEx(k, it, pool, true);
+    if (len >= 3 && len <= 12) k = tts && Math.random() < 0.25 ? "listen" : "build";
+    else k = tts && len <= 6 && Math.random() < 0.3 ? "listen" : "type";
+    return mk(k, it, true);
   });
-  const pairs: Ex[] = items.length >= 3 ? [{ key: `pairs-${++exSeq}`, kind: "pairs", items: shuffle(items).slice(0, 5) }] : [];
-  return [...pass1, ...pairs, ...pass2];
+  return [...pass1, ...pairs(items), ...pass2];
 }
 
 const TITLE: Record<Ex["kind"], string> = {
@@ -80,6 +239,9 @@ const TITLE: Record<Ex["kind"], string> = {
   type: "用英文寫出來",
   listen: "聽聽看，寫下你聽到的英文",
   pairs: "把英文和中文配成對",
+  cloze: "填入缺少的英文",
+  spot: "找出用錯的那個字",
+  dictation: "聽寫整句例句",
 };
 
 /* ---------- small pieces ---------- */
@@ -179,18 +341,42 @@ function Pairs({ items, onDone }: { items: Item[]; onDone: () => void }) {
 }
 
 /* ---------- lesson ---------- */
-type Phase = "play" | "out" | "done" | "streak";
+type Phase = "play" | "out" | "done" | "streak" | "failed";
 interface Feedback {
   ok: boolean;
   note?: string;
 }
 
-export function Lesson({ title, items, nodeId, review, onExit }: { title: string; items: Item[]; nodeId?: string; review?: boolean; onExit: () => void }) {
+export function Lesson({
+  title,
+  items,
+  nodeId,
+  review,
+  level = 1,
+  boss = false,
+  onExit,
+  onRetry,
+}: {
+  title: string;
+  items: Item[];
+  nodeId?: string;
+  review?: boolean;
+  level?: Level;
+  boss?: boolean;
+  onExit: () => void;
+  onRetry?: () => void;
+}) {
   const bank = useBank();
   const { items: all, hearts, game, gain, addGems, loseHeart, setLearned, completeNode, bumpQuest, recordCombo, mistake, buy, award, streak } = bank;
-  const [queue, setQueue] = useState<Ex[]>(() => buildLesson(items, all));
+  const rules = useMemo(() => rulesFor(level, boss), [level, boss]);
+  const [queue, setQueue] = useState<Ex[]>(() => buildLesson(items, all, level, boss));
   const [solved, setSolved] = useState(0);
-  const [phase, setPhase] = useState<Phase>(() => (bank.game.settings.hearts && bank.hearts.n <= 0 ? "out" : "play"));
+  const [phase, setPhase] = useState<Phase>(() => (rules.hearts && bank.game.settings.hearts && bank.hearts.n <= 0 ? "out" : "play"));
+  const [fast, setFast] = useState(0);
+  const [deadline, setDeadline] = useState(0);
+  const [tick, setTick] = useState(() => Date.now());
+  const [plays, setPlays] = useState(0);
+  const pausedAt = useRef(0);
   const [fb, setFb] = useState<Feedback | null>(null);
   const [pick, setPick] = useState<number | null>(null);
   const [built, setBuilt] = useState<number[]>([]);
@@ -209,7 +395,9 @@ export function Lesson({ title, items, nodeId, review, onExit }: { title: string
   const contRef = useRef<HTMLButtonElement>(null);
   const ex = queue[0];
   const total = solved + queue.length;
-  const heartsOn = game.settings.hearts;
+  const heartsOn = rules.hearts && game.settings.hearts;
+  const strict = rules.grading === "strict";
+  const remaining = deadline ? Math.max(0, (deadline - tick) / 1000) : 0;
 
   useEffect(() => {
     const o = document.body.style.overflow;
@@ -220,20 +408,61 @@ export function Lesson({ title, items, nodeId, review, onExit }: { title: string
   }, []);
 
   // reset answer state as soon as a new exercise comes up (during render, so stale tile ids never reach it)
-  const [ansKey, setAnsKey] = useState(ex?.key);
+  const [ansKey, setAnsKey] = useState<string | undefined>(undefined);
   if (ex && ansKey !== ex.key) {
     setAnsKey(ex.key);
     setPick(null);
     setBuilt([]);
     setText("");
+    setPlays(0);
+    const t = Date.now();
+    setTick(t);
+    setDeadline(ex.limit ? t + ex.limit * 1000 : 0);
   }
+
+  const playLimit = strict || boss ? 2 : Infinity;
+  const play = (txt: string, rate = 0.95) => {
+    if (plays >= playLimit) return;
+    setPlays((n) => n + 1);
+    try {
+      speechSynthesis.cancel();
+      const u = new SpeechSynthesisUtterance(txt);
+      u.lang = "en-GB";
+      u.rate = rate;
+      speechSynthesis.speak(u);
+    } catch {
+      /* ignore */
+    }
+  };
 
   // auto-play audio and focus the input for each new exercise
   useEffect(() => {
     if (!ex || ex.kind === "pairs") return;
-    if (ex.kind === "listen" || ex.kind === "pick-zh") window.setTimeout(() => speak(ex.item.en), 250);
-    if (ex.kind === "type" || ex.kind === "listen") window.setTimeout(() => inputRef.current?.focus(), 50);
+    if (ex.kind === "listen") window.setTimeout(() => play(ex.item.en), 250);
+    if (ex.kind === "dictation") window.setTimeout(() => play(ex.item.ex), 250);
+    if (ex.kind === "pick-zh") window.setTimeout(() => speak(ex.item.en), 250);
+    window.setTimeout(() => (document.querySelector("[data-answer]") as HTMLElement | null)?.focus(), 60);
   }, [ex?.key]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // per-question countdown; pauses while feedback or the leave dialog is showing
+  const timeUpRef = useRef<() => void>(() => {});
+  useEffect(() => {
+    if (!deadline || fb || phase !== "play" || confirmExit) return;
+    const t = window.setInterval(() => {
+      const now = Date.now();
+      setTick(now);
+      if (now >= deadline) timeUpRef.current();
+    }, 200);
+    return () => window.clearInterval(t);
+  }, [deadline, fb, phase, confirmExit]);
+  useEffect(() => {
+    if (confirmExit) pausedAt.current = Date.now();
+    else if (pausedAt.current) {
+      const d = Date.now() - pausedAt.current;
+      pausedAt.current = 0;
+      setDeadline((x) => (x ? x + d : x));
+    }
+  }, [confirmExit]);
 
   useEffect(() => {
     if (fb) contRef.current?.focus({ preventScroll: true });
@@ -243,7 +472,22 @@ export function Lesson({ title, items, nodeId, review, onExit }: { title: string
     !!ex &&
     !fb &&
     ex.kind !== "pairs" &&
-    ((ex.kind === "pick-en" || ex.kind === "pick-zh") ? pick !== null : ex.kind === "build" ? built.length > 0 : text.trim().length > 0);
+    (ex.kind === "pick-en" || ex.kind === "pick-zh" || ex.kind === "spot" ? pick !== null : ex.kind === "build" ? built.length > 0 : text.trim().length > 0);
+
+  /** Grade typed text according to the difficulty's rules. */
+  function judge(typed: string, target: string, kind: Kind): { ok: boolean; note?: string } {
+    const g = grade(typed, target);
+    const close = g.level === "perfect" || g.level === "close";
+    if (rules.grading === "strict" && kind !== "dictation") {
+      const ok = norm(typed) === norm(target);
+      return { ok, note: !ok && close ? "傳奇模式要一字不差" : undefined };
+    }
+    if (rules.grading !== "lenient") {
+      const ok = g.level === "perfect" || (g.level === "close" && g.score >= 0.9);
+      return { ok, note: ok && g.level !== "perfect" ? "有個小錯字，注意拼法" : !ok && close ? `${rules.name}模式只容許一個小錯字` : undefined };
+    }
+    return { ok: close, note: close && g.level === "close" ? "差一點點，注意一下拼法" : undefined };
+  }
 
   function answer(ok: boolean, note?: string) {
     if (!ex || ex.kind === "pairs") return;
@@ -260,9 +504,10 @@ export function Lesson({ title, items, nodeId, review, onExit }: { title: string
         window.setTimeout(() => setComboFlash(null), 1600);
       }
       setStats((s) => ({ ...s, right: s.right + 1 }));
+      if (ex.limit && remaining > ex.limit / 2) setFast((f) => f + 1);
       if (ex.second && !missed.current.has(it.id)) setLearned(it.id, true, null, false);
       if (review) mistake(it.id, -1);
-      if (ex.kind === "type" || ex.kind === "listen") bumpQuest("write");
+      if (ex.kind === "type" || ex.kind === "listen" || ex.kind === "cloze" || ex.kind === "dictation") bumpQuest("write");
     } else {
       sfx.wrong();
       setCombo(0);
@@ -270,11 +515,13 @@ export function Lesson({ title, items, nodeId, review, onExit }: { title: string
       missed.current.add(it.id);
       mistake(it.id, 1);
       setLearned(it.id, false);
-      loseHeart();
+      if (rules.hearts) loseHeart();
       const r = retries.current.get(it.id) ?? 0;
-      if (r < 2) {
+      if (rules.retry && r < 2) {
         retries.current.set(it.id, r + 1);
-        setQueue((q) => [...q, makeEx(ex.kind, it, all, ex.second)]);
+        // spot/cloze can't always be regenerated identically; fall back to typing
+        const k: Kind = ex.kind === "spot" || ex.kind === "cloze" || ex.kind === "dictation" ? "type" : ex.kind;
+        setQueue((q) => [...q, makeEx(k, it, all, ex.second, level, rules)]);
       }
     }
     setFb({ ok, note });
@@ -289,12 +536,34 @@ export function Lesson({ title, items, nodeId, review, onExit }: { title: string
     } else if (ex.kind === "build") {
       const said = built.filter((i) => ex.tiles[i]).map((i) => ex.tiles[i].w).join(" ");
       answer(norm(said) === norm(tokens(it.en).join(" ")));
+    } else if (ex.kind === "spot") {
+      if (pick === null || !ex.spot) return;
+      answer(pick === ex.spot.wrong);
+    } else if (ex.kind === "cloze" && ex.cloze) {
+      const r = judge(text, ex.cloze.answer, "cloze");
+      answer(r.ok, r.note);
+    } else if (ex.kind === "dictation") {
+      const r = judge(text, it.ex, "dictation");
+      answer(r.ok, r.note);
     } else {
-      const g = grade(text, it.en);
-      const ok = g.level === "perfect" || g.level === "close";
-      answer(ok, ok && g.level === "close" ? "差一點點，注意一下拼法" : undefined);
+      const r = judge(text, it.en, ex.kind);
+      answer(r.ok, r.note);
     }
   }
+
+  function timeUp() {
+    if (!ex || fb || phase !== "play") return;
+    if (ex.kind === "pairs") {
+      sfx.wrong();
+      setCombo(0);
+      setStats((s) => ({ ...s, wrong: s.wrong + 1 }));
+      if (rules.hearts) loseHeart();
+      advance(true);
+      return;
+    }
+    answer(false, "時間到");
+  }
+  timeUpRef.current = timeUp;
 
   function skip() {
     if (!ex || fb) return;
@@ -305,12 +574,15 @@ export function Lesson({ title, items, nodeId, review, onExit }: { title: string
     const secs = Math.round((Date.now() - t0.current) / 1000);
     const perfect = stats.wrong === 0;
     const acc = Math.round((stats.right / Math.max(1, stats.right + stats.wrong)) * 100);
-    const base = stats.right * 2 + 10 + (perfect ? 5 : 0);
-    const xp = gain(base, null, `+${base} XP 關卡完成`);
-    const gems = review ? 0 : GEMS.lesson + (perfect ? GEMS.perfect : 0);
+    const base = Math.round((stats.right * 2 + 10 + (perfect ? 5 : 0)) * rules.xp) + fast;
+    const xp = gain(base, null, `+${base} XP ${boss ? "單元考通過" : "關卡完成"}`);
+    const gems = review ? 0 : GEMS.lesson + (perfect ? GEMS.perfect : 0) + rules.gems;
     if (gems) window.setTimeout(() => addGems(gems), 400);
-    if (nodeId) completeNode(nodeId, perfect);
+    if (nodeId) completeNode(nodeId, perfect, boss ? 1 : level);
     bumpQuest("lessons");
+    if (level >= 2 || boss) bumpQuest("hard");
+    if (level === 3 && !boss) bumpQuest("legend");
+    if (boss) bumpQuest("boss");
     if (perfect) {
       bumpQuest("perfect");
       if (stats.right >= 5) award("perfect");
@@ -321,13 +593,15 @@ export function Lesson({ title, items, nodeId, review, onExit }: { title: string
     confetti({ count: perfect ? 200 : 120 });
   }
 
-  function cont() {
-    if (!fb) return;
-    const wasWrong = !fb.ok;
-    setFb(null);
+  function advance(wasWrong: boolean) {
     const rest = queue.slice(1);
     setQueue(rest);
     setSolved((s) => s + 1);
+    if (wasWrong && rules.mistakes !== null && stats.wrong + (ex?.kind === "pairs" ? 1 : 0) > rules.mistakes) {
+      sfx.heart();
+      setPhase("failed");
+      return;
+    }
     if (wasWrong && heartsOn && hearts.n <= 0) {
       setPhase("out");
       return;
@@ -335,13 +609,17 @@ export function Lesson({ title, items, nodeId, review, onExit }: { title: string
     if (!rest.length) finish();
   }
 
+  function cont() {
+    if (!fb) return;
+    const wasWrong = !fb.ok;
+    setFb(null);
+    advance(wasWrong);
+  }
+
   function pairsDone() {
     sfx.correct();
     setStats((s) => ({ ...s, right: s.right + 1 }));
-    const rest = queue.slice(1);
-    setQueue(rest);
-    setSolved((s) => s + 1);
-    if (!rest.length) finish();
+    advance(false);
   }
 
   // keyboard: Enter checks / continues, 1–4 picks, Esc asks to leave
@@ -353,7 +631,7 @@ export function Lesson({ title, items, nodeId, review, onExit }: { title: string
       return;
     }
     if (phase !== "play" || confirmExit || !ex) return;
-    const typing = (e.target as HTMLElement).tagName === "INPUT";
+    const typing = /INPUT|TEXTAREA/.test((e.target as HTMLElement).tagName);
     if (e.key === "Enter") {
       if (e.target === contRef.current) return; // the focused 繼續 button handles it natively
       e.preventDefault();
@@ -387,14 +665,24 @@ export function Lesson({ title, items, nodeId, review, onExit }: { title: string
             </div>
           </div>
           <div>
-            <h2 className="m-0 text-3xl font-extrabold text-xp">{result.perfect ? "零失誤，完美過關！" : "關卡完成！"}</h2>
-            <p className="m-0 mt-1 text-muted-foreground">{title}</p>
+            <h2 className="m-0 text-3xl font-extrabold text-xp">
+              {boss ? "單元考通過！" : level === 3 ? "傳奇關卡通過！" : result.perfect ? "零失誤，完美過關！" : "關卡完成！"}
+            </h2>
+            <p className="m-0 mt-1 text-muted-foreground">
+              {title}
+              {(level > 1 || boss) && <span className={cn("ml-2 rounded-full px-2 py-0.5 text-xs font-extrabold text-white", boss ? "bg-bad" : level === 3 ? "bg-formal" : "bg-streak")}>{rules.name}・XP ×{rules.xp}</span>}
+            </p>
           </div>
           <div className="grid w-full max-w-md grid-cols-3 gap-3">
             <Stat color="--xp" label="總 XP" icon={<Zap className="h-5 w-5" />} value={String(result.xp)} />
             <Stat color="--good" label="正確率" icon={<Target className="h-5 w-5" />} value={result.acc + "%"} />
             <Stat color="--primary" label="用時" icon={<Clock className="h-5 w-5" />} value={fmtTime(result.secs)} />
           </div>
+          {fast > 0 && (
+            <p className="m-0 flex items-center gap-1.5 font-extrabold text-good">
+              <Timer className="h-5 w-5" /> 快答 {fast} 題（+{fast} XP）
+            </p>
+          )}
           {bestCombo >= 3 && (
             <p className="m-0 flex items-center gap-1.5 font-extrabold text-streak">
               <Flame className="h-5 w-5" /> 最高連續答對 {bestCombo} 題
@@ -452,6 +740,30 @@ export function Lesson({ title, items, nodeId, review, onExit }: { title: string
     );
   }
 
+  if (phase === "failed") {
+    return (
+      <Screen>
+        <div className="flex flex-col items-center gap-5 text-center">
+          <ShieldX className="h-28 w-28 animate-pop text-formal" strokeWidth={1.5} />
+          <h2 className="m-0 text-3xl font-extrabold">{rules.name}挑戰失敗</h2>
+          <p className="m-0 max-w-sm text-muted-foreground">
+            錯了 {stats.wrong} 題，{rules.name}最多只能錯 {rules.mistakes} 題。答對 {stats.right} 題，再試一次會換一批題型。
+          </p>
+        </div>
+        <Bottom>
+          <button type="button" className={cn(bigBtn, "border-2 border-b-4 bg-card text-muted-foreground")} onClick={onExit}>
+            離開
+          </button>
+          {onRetry && (
+            <button autoFocus type="button" className={cn(bigBtn, "bg-formal text-white")} style={shadow("--formal")} onClick={onRetry}>
+              <RotateCcw className="h-5 w-5" /> 再挑戰
+            </button>
+          )}
+        </Bottom>
+      </Screen>
+    );
+  }
+
   if (phase === "out") {
     return (
       <Screen>
@@ -504,12 +816,36 @@ export function Lesson({ title, items, nodeId, review, onExit }: { title: string
             <span className="absolute inset-x-2 top-1 h-1 rounded-full bg-white/35" />
           </div>
         </div>
-        <span key={hearts.n} className={cn("flex items-center gap-1 text-lg font-extrabold", heartsOn ? "text-bad" : "text-muted-foreground", heartsOn && hearts.n < MAX_HEARTS && "animate-pop")} aria-label={heartsOn ? `剩 ${hearts.n} 顆生命` : "生命制度關閉"}>
-          <Heart className={cn("h-6 w-6", heartsOn && "fill-bad")} />
-          {heartsOn ? <span className="tabular">{hearts.n}</span> : <InfinityIcon className="h-5 w-5" />}
-        </span>
+        {level > 1 || boss ? (
+          <span className={cn("hidden rounded-full px-2.5 py-0.5 text-xs font-extrabold text-white sm:inline-block", boss ? "bg-bad" : level === 3 ? "bg-formal" : "bg-streak")}>{rules.name}</span>
+        ) : null}
+        {rules.mistakes !== null ? (
+          <span className="flex items-center gap-0.5" aria-label={`還能錯 ${Math.max(0, rules.mistakes - stats.wrong)} 題`} title="容錯次數">
+            {Array.from({ length: rules.mistakes }, (_, i) => {
+              const left = i < rules.mistakes! - stats.wrong;
+              return left ? <Shield key={i} className="h-6 w-6 fill-formal/25 text-formal" /> : <ShieldX key={i} className="h-6 w-6 animate-pop text-muted-foreground/50" />;
+            })}
+          </span>
+        ) : (
+          <span key={hearts.n} className={cn("flex items-center gap-1 text-lg font-extrabold", heartsOn ? "text-bad" : "text-muted-foreground", heartsOn && hearts.n < MAX_HEARTS && "animate-pop")} aria-label={heartsOn ? `剩 ${hearts.n} 顆生命` : "生命制度關閉"}>
+            <Heart className={cn("h-6 w-6", heartsOn && "fill-bad")} />
+            {heartsOn ? <span className="tabular">{hearts.n}</span> : <InfinityIcon className="h-5 w-5" />}
+          </span>
+        )}
       </header>
       <div className="relative mx-auto h-7 w-full max-w-[1000px] px-4">
+        {ex && ex.limit > 0 && !fb && !comboFlash && (
+          <div className="absolute inset-x-4 top-1.5 flex items-center gap-2 sm:left-[72px]" aria-label={`剩 ${Math.ceil(remaining)} 秒`}>
+            <Timer className={cn("h-4 w-4 shrink-0", remaining <= 5 ? "animate-pulse text-bad" : "text-muted-foreground")} />
+            <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-secondary">
+              <div
+                className={cn("h-full rounded-full transition-[width] duration-200 ease-linear", remaining / ex.limit > 0.5 ? "bg-good" : remaining / ex.limit > 0.25 ? "bg-xp" : "bg-bad")}
+                style={{ width: `${(remaining / ex.limit) * 100}%` }}
+              />
+            </div>
+            <span className={cn("tabular w-8 text-right text-sm font-extrabold", remaining <= 5 ? "text-bad" : "text-muted-foreground")}>{Math.ceil(remaining)}</span>
+          </div>
+        )}
         {comboFlash && (
           <p className="absolute inset-x-0 top-0 m-0 flex animate-pop justify-center">
             <span className="flex items-center gap-1 rounded-full bg-streak-soft px-3 py-0.5 text-sm font-extrabold text-streak">
@@ -526,7 +862,20 @@ export function Lesson({ title, items, nodeId, review, onExit }: { title: string
             {ex.kind === "pairs" ? (
               <Pairs items={ex.items} onDone={pairsDone} />
             ) : (
-              <ExerciseBody ex={ex} fb={fb} pick={pick} setPick={setPick} built={built} setBuilt={setBuilt} text={text} setText={setText} inputRef={inputRef} />
+              <ExerciseBody
+                ex={ex}
+                fb={fb}
+                pick={pick}
+                setPick={setPick}
+                built={built}
+                setBuilt={setBuilt}
+                text={text}
+                setText={setText}
+                inputRef={inputRef}
+                playsLeft={playLimit === Infinity ? null : Math.max(0, playLimit - plays)}
+                onPlay={(slow) => play(ex.kind === "dictation" ? ex.item.ex : ex.item.en, slow ? 0.6 : 0.95)}
+                allowSlow={!strict && !boss}
+              />
             )}
           </div>
         )}
@@ -549,7 +898,15 @@ export function Lesson({ title, items, nodeId, review, onExit }: { title: string
                   <p className="m-0 text-xl font-extrabold">{fb.ok ? (fb.note ? "算你對！" : ["答得好！", "太棒了！", "正確！", "很好！"][stats.right % 4]) : "正確答案："}</p>
                   {(!fb.ok || fb.note) && ex && (
                     <p className="m-0 font-semibold">
-                      {ex.kind === "pick-zh" ? ex.item.zh : ex.item.en}
+                      {ex.kind === "pick-zh"
+                        ? ex.item.zh
+                        : ex.kind === "cloze" && ex.cloze
+                          ? ex.cloze.answer
+                          : ex.kind === "spot" && ex.spot
+                            ? `「${ex.spot.words[ex.spot.wrong].replace(/^[^\w']+|[^\w']+$/g, "")}」應該是「${ex.spot.original}」`
+                            : ex.kind === "dictation"
+                              ? ex.item.ex
+                              : ex.item.en}
                       {fb.note && <span className="ml-2 text-sm font-bold opacity-80">（{fb.note}）</span>}
                     </p>
                   )}
@@ -601,7 +958,13 @@ function ExerciseBody({
   text,
   setText,
   inputRef,
+  playsLeft,
+  onPlay,
+  allowSlow,
 }: {
+  playsLeft: number | null;
+  onPlay: (slow: boolean) => void;
+  allowSlow: boolean;
   ex: Extract<Ex, { kind: Kind }>;
   fb: Feedback | null;
   pick: number | null;
@@ -686,43 +1049,30 @@ function ExerciseBody({
     );
   }
 
-  // type / listen
-  return (
-    <>
-      {ex.kind === "listen" ? (
-        <div className="flex items-center gap-4">
-          <button type="button" onClick={() => speak(it.en)} aria-label="播放" className="grid h-24 w-24 place-items-center rounded-3xl bg-primary text-primary-foreground" style={shadow("--primary")}>
-            <Volume2 className="h-11 w-11" />
-          </button>
-          <button
-            type="button"
-            onClick={() => {
-              try {
-                speechSynthesis.cancel();
-                const u = new SpeechSynthesisUtterance(it.en);
-                u.lang = "en-GB";
-                u.rate = 0.6;
-                speechSynthesis.speak(u);
-              } catch {
-                /* ignore */
-              }
-            }}
-            aria-label="慢速播放"
-            className="grid h-16 w-16 place-items-center rounded-2xl bg-primary/80 text-primary-foreground"
-            style={shadow("--primary")}
-          >
-            <Turtle className="h-7 w-7" />
-          </button>
-        </div>
-      ) : (
-        prompt
-      )}
+  const answerInput = (placeholder: string, area = false) =>
+    area ? (
+      <textarea
+        data-answer
+        value={text}
+        onChange={(e) => setText(e.target.value)}
+        readOnly={!!fb}
+        placeholder={placeholder}
+        aria-label="你的答案"
+        autoComplete="off"
+        autoCapitalize="off"
+        autoCorrect="off"
+        spellCheck={false}
+        rows={3}
+        className="w-full resize-none rounded-2xl border-2 bg-secondary px-4 py-3 text-[18px] font-semibold outline-none focus:border-primary focus:bg-card"
+      />
+    ) : (
       <input
+        data-answer
         ref={inputRef}
         value={text}
         onChange={(e) => setText(e.target.value)}
         readOnly={!!fb}
-        placeholder={ex.kind === "listen" ? "輸入你聽到的英文" : "用英文輸入"}
+        placeholder={placeholder}
         aria-label="你的答案"
         autoComplete="off"
         autoCapitalize="off"
@@ -730,6 +1080,109 @@ function ExerciseBody({
         spellCheck={false}
         className="h-32 w-full rounded-2xl border-2 bg-secondary px-4 text-[18px] font-semibold outline-none focus:border-primary focus:bg-card sm:h-28"
       />
+    );
+
+  const player = (
+    <div className="flex items-center gap-4">
+      <button
+        type="button"
+        onClick={() => onPlay(false)}
+        disabled={playsLeft === 0}
+        aria-label="播放"
+        className="grid h-24 w-24 place-items-center rounded-3xl bg-primary text-primary-foreground disabled:opacity-40"
+        style={shadow("--primary")}
+      >
+        <Volume2 className="h-11 w-11" />
+      </button>
+      {allowSlow ? (
+        <button type="button" onClick={() => onPlay(true)} aria-label="慢速播放" className="grid h-16 w-16 place-items-center rounded-2xl bg-primary/80 text-primary-foreground" style={shadow("--primary")}>
+          <Turtle className="h-7 w-7" />
+        </button>
+      ) : (
+        <p className="m-0 text-sm font-bold text-muted-foreground">{playsLeft === null ? "" : playsLeft > 0 ? `還能播 ${playsLeft} 次，不能慢速` : "播放次數用完了"}</p>
+      )}
+    </div>
+  );
+
+  if (ex.kind === "cloze" && ex.cloze) {
+    const c = ex.cloze;
+    return (
+      <>
+        <p className="m-0 rounded-2xl border-2 bg-card px-4 py-3 text-[15px] font-semibold text-muted-foreground">提示：{it.zh}</p>
+        <div className="rounded-2xl border-2 bg-card px-4 py-5 text-[20px] font-semibold leading-[2.4]">
+          {c.before}
+          <input
+            data-answer
+            ref={inputRef}
+            value={text}
+            onChange={(e) => setText(e.target.value)}
+            readOnly={!!fb}
+            aria-label="填入缺少的英文"
+            autoComplete="off"
+            autoCapitalize="off"
+            autoCorrect="off"
+            spellCheck={false}
+            style={{ width: `${Math.max(5, Math.min(26, c.answer.length + 2))}ch` }}
+            className="mx-1 inline-block max-w-full rounded-lg border-b-4 border-primary bg-accent px-2 py-0.5 align-baseline text-[19px] font-bold text-accent-foreground outline-none"
+          />
+          {c.after}
+        </div>
+        <p className="m-0 text-sm font-semibold text-muted-foreground">
+          缺了 {tokens(c.answer).length} 個字{allowSlow && `，第一個字母是「${c.answer.trim()[0]}」`}
+        </p>
+      </>
+    );
+  }
+
+  if (ex.kind === "spot" && ex.spot) {
+    const sp = ex.spot;
+    return (
+      <>
+        <p className="m-0 rounded-2xl border-2 bg-card px-4 py-3 text-[19px] font-semibold leading-snug">{it.zh}</p>
+        <p className="m-0 text-sm font-semibold text-muted-foreground">下面的英文有一個字被換掉了，點出那個字。</p>
+        <div className="flex flex-wrap gap-2" role="group" aria-label="句子">
+          {sp.words.map((w, k) => {
+            const state = fb ? (k === sp.wrong ? "right" : pick === k ? "wrong" : undefined) : undefined;
+            return (
+              <button
+                key={k}
+                type="button"
+                disabled={!!fb}
+                onClick={() => {
+                  sfx.tap();
+                  setPick(k);
+                }}
+                className={cn(
+                  "rounded-xl border-2 border-b-4 bg-card px-3 py-2 text-[17px] font-semibold transition-colors enabled:hover:bg-secondary",
+                  pick === k && !state && "border-primary bg-accent text-accent-foreground",
+                  state === "right" && "border-good bg-good-soft text-good",
+                  state === "wrong" && "animate-shake border-bad bg-bad-soft text-bad",
+                )}
+              >
+                {w}
+              </button>
+            );
+          })}
+        </div>
+      </>
+    );
+  }
+
+  if (ex.kind === "dictation") {
+    return (
+      <>
+        {player}
+        <p className="m-0 text-sm font-semibold text-muted-foreground">這是「{it.en.length > 40 ? it.en.slice(0, 40) + "…" : it.en}」的例句，把整句寫下來。</p>
+        {answerInput("輸入你聽到的整句英文", true)}
+      </>
+    );
+  }
+
+  // type / listen
+  return (
+    <>
+      {ex.kind === "listen" ? player : prompt}
+      {answerInput(ex.kind === "listen" ? "輸入你聽到的英文" : "用英文輸入")}
     </>
   );
 }

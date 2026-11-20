@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { BookOpen, Check, Crown, Gift, Lock, PackageOpen, RotateCcw, Star, Trophy } from "lucide-react";
+import { BookOpen, Check, Crown, Gift, Lock, PackageOpen, RotateCcw, Star, Swords, Trophy } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { tabName } from "@/lib/data";
 import { toast } from "@/lib/fx";
 import { UNIT_COLORS, buildPath, nodeStates, type PathNode } from "@/lib/path";
 import { useBank } from "@/lib/store";
+import { LEVEL_DESC, LEVEL_NAME, rulesFor, type Level } from "@/lib/levels";
 import type { Item, TabKey } from "@/lib/types";
 import { secId } from "./LeftNav";
 
@@ -17,7 +18,7 @@ export function PathView({
   onBrowse,
 }: {
   tab: TabKey;
-  onStart: (title: string, items: Item[], nodeId?: string, review?: boolean) => void;
+  onStart: (title: string, items: Item[], opts: { nodeId?: string; review?: boolean; level?: Level; boss?: boolean }) => void;
   onBrowse: (sec: string) => void;
 }) {
   const { items, game, openChest } = useBank();
@@ -36,10 +37,12 @@ export function PathView({
     return () => window.clearTimeout(t);
   }, [tab]);
 
-  const start = (nd: PathNode) => {
+  const start = (nd: PathNode, level: Level) => {
     setOpen(null);
-    onStart(`${nd.sec}・第 ${nd.n} 關`, nd.items, nd.id);
+    if (nd.type === "boss") onStart(`${nd.sec}・單元考`, nd.items, { nodeId: nd.id, boss: true, level: 2 });
+    else onStart(`${nd.sec}・第 ${nd.n} 關`, nd.items, { nodeId: nd.id, level });
   };
+  const preferred = (game.settings.level ?? 1) as Level;
 
   return (
     <div>
@@ -53,7 +56,7 @@ export function PathView({
         <button
           type="button"
           disabled={!mistakes.length}
-          onClick={() => onStart("錯題複習", mistakes.slice(0, 8), undefined, true)}
+          onClick={() => onStart("錯題複習", mistakes.slice(0, 8), { review: true, level: preferred })}
           className="inline-flex items-center gap-2 rounded-xl border-2 border-b-4 bg-card px-4 py-2 font-extrabold text-bad transition-transform active:translate-y-0.5 active:border-b-2 disabled:text-muted-foreground disabled:opacity-60"
         >
           <RotateCcw className="h-4 w-4" /> 複習錯題{mistakes.length ? `（${mistakes.length}）` : ""}
@@ -66,6 +69,8 @@ export function PathView({
         const color = UNIT_COLORS[u.idx % UNIT_COLORS.length];
         const ls = u.nodes.filter((n) => n.type === "lesson");
         const uDone = ls.filter((n) => game.path[n.id]?.done).length;
+        const bossNode = u.nodes.find((n) => n.type === "boss");
+        const bossPassed = !!(bossNode && game.path[bossNode.id]?.done);
         return (
           <section key={u.sec} id={secId(u.sec)} className="mb-4 scroll-mt-24" aria-label={`第 ${u.idx + 1} 單元：${u.sec}`}>
             <div className="flex items-center justify-between gap-3 rounded-2xl px-5 py-4 text-white" style={{ background: `hsl(var(${color}))`, boxShadow: `0 4px 0 0 ${shade(color)}` }}>
@@ -73,7 +78,10 @@ export function PathView({
                 <p className="m-0 text-sm font-extrabold uppercase tracking-wide opacity-85">
                   第 {u.idx + 1} 單元・{uDone}/{ls.length} 關
                 </p>
-                <h3 className="m-0 truncate text-xl font-extrabold">{u.sec}</h3>
+                <h3 className="m-0 flex items-center gap-2 truncate text-xl font-extrabold">
+                  {u.sec}
+                  {bossPassed && <Trophy className="h-5 w-5 shrink-0 text-xp" aria-label="單元考已通過" />}
+                </h3>
               </div>
               <button
                 type="button"
@@ -84,16 +92,35 @@ export function PathView({
               </button>
             </div>
 
-            <div className="flex flex-col items-center gap-6 py-9">
+            <div className="flex flex-col items-center gap-11 pb-12 pt-14">
               {u.nodes.map((nd, i) => {
                 const st = states.get(nd.id)!;
                 const prog = game.path[nd.id];
                 const x = OFFSETS[(i + u.idx * 2) % OFFSETS.length] * 46;
                 const isChest = nd.type === "chest";
+                const isBoss = nd.type === "boss";
                 const perfect = !!prog?.perfect;
-                const bg = st === "locked" ? "hsl(var(--secondary))" : isChest ? "hsl(var(--xp))" : perfect ? "hsl(var(--xp))" : `hsl(var(${color}))`;
-                const sh = st === "locked" ? "hsl(var(--border))" : isChest || perfect ? shade("--xp") : shade(color);
-                const Icon = isChest ? (st === "done" ? PackageOpen : Gift) : st === "locked" ? Lock : st === "done" ? (perfect ? Crown : Check) : Star;
+                const lv = prog?.level ?? (prog?.done ? 1 : 0);
+                const tone = isChest ? "--xp" : isBoss ? (st === "done" ? "--xp" : "--bad") : lv >= 3 ? "--formal" : color;
+                const bg = st === "locked" ? "hsl(var(--secondary))" : `hsl(var(${tone}))`;
+                const sh = st === "locked" ? "hsl(var(--border))" : shade(tone);
+                const Icon = isChest
+                  ? st === "done"
+                    ? PackageOpen
+                    : Gift
+                  : st === "locked"
+                    ? Lock
+                    : isBoss
+                      ? st === "done"
+                        ? Trophy
+                        : Swords
+                      : st === "done"
+                        ? lv >= 3
+                          ? Crown
+                          : lv >= 2
+                            ? Star
+                            : Check
+                        : Star;
                 return (
                   <div key={nd.id} ref={st === "current" && !isChest ? currentRef : undefined} className="relative" style={{ transform: `translateX(${x}px)`, zIndex: open === nd.id ? 20 : undefined }}>
                     {st === "current" && !isChest && (
@@ -107,15 +134,25 @@ export function PathView({
                     {st === "current" && !isChest && <span className="absolute -inset-2.5 rounded-full border-[6px] opacity-30" style={{ borderColor: `hsl(var(${color}))` }} aria-hidden="true" />}
                     <button
                       type="button"
-                      aria-label={isChest ? `第 ${u.idx + 1} 單元寶箱${st === "done" ? "（已開）" : ""}` : `第 ${nd.n} 關${st === "done" ? "（已完成）" : st === "locked" ? "（未解鎖）" : ""}`}
+                      aria-label={
+                        isChest
+                          ? `第 ${u.idx + 1} 單元寶箱${st === "done" ? "（已開）" : ""}`
+                          : isBoss
+                            ? `第 ${u.idx + 1} 單元考${st === "done" ? "（已通過）" : st === "locked" ? "（未解鎖）" : ""}`
+                            : `第 ${nd.n} 關${st === "done" ? `（已完成・${LEVEL_NAME[Math.max(1, lv) as Level]}）` : st === "locked" ? "（未解鎖）" : ""}`
+                      }
                       onClick={(e) => {
                         if (isChest) {
                           if (st === "done") toast("這個寶箱已經開過了");
-                          else if (st === "locked") toast("先完成這個單元的關卡才能開寶箱");
+                          else if (st === "locked") toast(bossNode ? "通過這個單元的單元考才能開寶箱" : "先完成這個單元的關卡才能開寶箱");
                           else {
                             const r = e.currentTarget.getBoundingClientRect();
                             openChest(nd.id, { x: r.left + r.width / 2, y: r.top });
                           }
+                          return;
+                        }
+                        if (isBoss && st === "locked") {
+                          toast("先完成這個單元的所有關卡，才能參加單元考");
                           return;
                         }
                         setOpen(open === nd.id ? null : nd.id);
@@ -123,32 +160,87 @@ export function PathView({
                       className={cn(
                         "relative z-[1] grid h-[72px] w-[72px] place-items-center rounded-full transition-transform active:translate-y-1.5",
                         isChest && "rounded-2xl",
-                        isChest && st === "current" && "animate-bounce",
+                        isBoss && "h-[84px] w-[84px] rounded-[28px]",
+                        (isChest || isBoss) && st === "current" && "animate-bounce",
                       )}
                       style={{ background: bg, boxShadow: `0 7px 0 0 ${sh}` }}
                     >
-                      <Icon className={cn("h-8 w-8", st === "locked" ? "text-muted-foreground/60" : "text-white")} strokeWidth={2.6} />
+                      <Icon className={cn("h-8 w-8", st === "locked" ? "text-muted-foreground/60" : "text-white", st === "done" && lv >= 2 && !isBoss && "fill-white/90")} strokeWidth={2.6} />
                     </button>
+                    {!isChest && !isBoss && lv > 0 && (
+                      <span className="absolute -bottom-5 left-1/2 flex -translate-x-1/2 gap-0.5" aria-hidden="true">
+                        {[1, 2, 3].map((k) => (
+                          <Star key={k} className={cn("h-3.5 w-3.5", k <= lv ? (lv >= 3 ? "fill-formal text-formal" : "fill-xp text-xp") : "fill-secondary text-border")} />
+                        ))}
+                      </span>
+                    )}
+                    {isBoss && st !== "done" && (
+                      <span className="absolute -bottom-6 left-1/2 -translate-x-1/2 whitespace-nowrap text-xs font-extrabold text-bad">單元考</span>
+                    )}
 
                     {open === nd.id && !isChest && (
+                      <div className="absolute top-[96px] z-10 w-[min(18rem,calc(100vw-32px))] -translate-x-1/2" style={{ left: `calc(50% - ${x}px)` }}>
                       <div
-                        className="absolute left-1/2 top-[88px] z-10 w-64 -translate-x-1/2 animate-rise rounded-2xl p-4 text-white"
-                        style={{ background: st === "locked" ? "hsl(var(--muted-foreground))" : `hsl(var(${color}))`, boxShadow: `0 4px 0 0 ${st === "locked" ? "hsl(var(--border))" : shade(color)}` }}
+                        className="animate-rise rounded-2xl p-4 text-white"
+                        style={{ background: `hsl(var(${isBoss ? "--bad" : st === "locked" ? "--muted-foreground" : color}))`, boxShadow: `0 4px 0 0 ${shade(isBoss ? "--bad" : st === "locked" ? "--muted-foreground" : color)}` }}
                       >
-                        <p className="m-0 text-lg font-extrabold">
-                          {nd.sec}・第 {nd.n} 關
-                        </p>
-                        <p className="m-0 mt-0.5 text-sm font-semibold opacity-90">
-                          {st === "locked" ? "完成前面的關卡就會解鎖" : st === "done" ? `已完成${perfect ? "・零失誤" : ""}・${nd.items.length} 句` : `${nd.items.length} 句・約 ${nd.items.length * 2 + 1} 題`}
-                        </p>
-                        <button
-                          type="button"
-                          onClick={() => start(nd)}
-                          className="mt-3 w-full rounded-xl bg-white py-2.5 font-extrabold uppercase"
-                          style={{ color: st === "locked" ? "hsl(var(--muted-foreground))" : `hsl(var(${color}))`, boxShadow: "0 4px 0 0 rgb(0 0 0 / .15)" }}
-                        >
-                          {st === "locked" ? "直接挑戰" : st === "done" ? "再練一次" : "開始"}
-                        </button>
+                        {isBoss ? (
+                          <>
+                            <p className="m-0 text-lg font-extrabold">{nd.sec}・單元考</p>
+                            <p className="m-0 mt-1 text-sm font-semibold opacity-90">
+                              從整個單元出 10–12 題：填空、找錯字、拼句、聽寫、默寫混在一起。每題限時，最多錯 3 題。通過可拿 +{rulesFor(2, true).gems} 寶石並打開寶箱。
+                            </p>
+                            <button
+                              type="button"
+                              onClick={() => start(nd, 2)}
+                              className="mt-3 w-full rounded-xl bg-white py-2.5 font-extrabold uppercase text-bad"
+                              style={{ boxShadow: "0 4px 0 0 rgb(0 0 0 / .15)" }}
+                            >
+                              {st === "done" ? "再考一次" : "開始單元考"}
+                            </button>
+                          </>
+                        ) : (
+                          <>
+                            <p className="m-0 text-lg font-extrabold">
+                              {nd.sec}・第 {nd.n} 關
+                            </p>
+                            <p className="m-0 mt-0.5 text-sm font-semibold opacity-90">
+                              {st === "locked" ? "還沒解鎖，也可以直接挑戰" : st === "done" ? `已通過「${LEVEL_NAME[Math.max(1, lv) as Level]}」${perfect ? "・曾零失誤" : ""}` : `${nd.items.length} 句`}
+                            </p>
+                            <div className="mt-3 flex flex-col gap-2">
+                              {([1, 2, 3] as Level[]).map((L) => {
+                                const r = rulesFor(L);
+                                const locked3 = L === 3 && lv < 1;
+                                const recommended: Level = lv >= 2 ? 3 : lv === 1 ? (Math.max(preferred, 2) as Level) : preferred;
+                                const main = L === recommended;
+                                return (
+                                  <button
+                                    key={L}
+                                    type="button"
+                                    disabled={locked3}
+                                    onClick={() => start(nd, L)}
+                                    title={LEVEL_DESC[L]}
+                                    className={cn(
+                                      "flex w-full items-center justify-between gap-2 rounded-xl px-3 py-2 text-left font-extrabold disabled:cursor-not-allowed disabled:opacity-55",
+                                      main ? "bg-white" : "border-2 border-white/45 hover:bg-white/15",
+                                    )}
+                                    style={main ? { color: `hsl(var(${st === "locked" ? "--muted-foreground" : color}))`, boxShadow: "0 4px 0 0 rgb(0 0 0 / .15)" } : undefined}
+                                  >
+                                    <span className="flex items-center gap-1.5">
+                                      {L === 3 ? <Crown className="h-4 w-4" /> : L === 2 ? <Star className="h-4 w-4" /> : <Check className="h-4 w-4" />}
+                                      {LEVEL_NAME[L]}
+                                      {lv >= L && <span className="text-xs opacity-75">已通過</span>}
+                                    </span>
+                                    <span className="text-xs font-bold opacity-85">
+                                      {locked3 ? "先過一次才能挑戰" : L === 1 ? "XP ×1" : `XP ×${r.xp}${r.gems ? `・+${r.gems} 寶石` : ""}`}
+                                    </span>
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          </>
+                        )}
+                      </div>
                       </div>
                     )}
                   </div>

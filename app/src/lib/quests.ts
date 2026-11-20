@@ -1,4 +1,4 @@
-export type QuestKind = "xp" | "lessons" | "perfect" | "combo" | "write" | "match" | "learn";
+export type QuestKind = "xp" | "lessons" | "perfect" | "combo" | "write" | "match" | "learn" | "hard" | "legend" | "boss";
 
 export interface QuestDef {
   id: string;
@@ -23,6 +23,10 @@ const OTHER: QuestDef[] = [
   { id: "write5", kind: "write", target: 5, title: "默寫或聽寫答對 5 題", reward: 15 },
   { id: "match1", kind: "match", target: 1, title: "完成 1 次配對遊戲", reward: 10 },
   { id: "learn5", kind: "learn", target: 5, title: "學會 5 個新句子", reward: 15 },
+  { id: "hard1", kind: "hard", target: 1, title: "用困難以上的難度過 1 關", reward: 20 },
+  { id: "hard2", kind: "hard", target: 2, title: "用困難以上的難度過 2 關", reward: 30 },
+  { id: "legend1", kind: "legend", target: 1, title: "通過 1 個傳奇關卡", reward: 30 },
+  { id: "boss1", kind: "boss", target: 1, title: "通過 1 次單元考", reward: 30 },
 ];
 
 /** Max-type quests track the best value of the day rather than a running total. */

@@ -89,6 +89,9 @@ export function lastNDays(days: Record<string, number>, n: number) {
 }
 
 export interface AchCtx {
+  hard: number;
+  legend: number;
+  boss: number;
   lessons: number;
   units: number;
   gems: number;
@@ -106,7 +109,7 @@ export interface Achievement {
   id: string;
   name: string;
   desc: string;
-  icon: "sprout" | "book" | "trophy" | "crown" | "flame" | "zap" | "target" | "timer" | "pen" | "medal" | "star" | "gem" | "mic" | "keyboard" | "map" | "flag" | "diamond";
+  icon: "sprout" | "book" | "trophy" | "crown" | "flame" | "zap" | "target" | "timer" | "pen" | "medal" | "star" | "gem" | "mic" | "keyboard" | "map" | "flag" | "diamond" | "shield" | "swords";
   check?: (c: AchCtx) => boolean;
 }
 
@@ -127,6 +130,10 @@ export const ACHIEVEMENTS: Achievement[] = [
   { id: "lesson1", name: "啟程", desc: "完成路徑上的第一關", icon: "map", check: (c) => c.lessons >= 1 },
   { id: "unit1", name: "單元達人", desc: "完成一整個單元", icon: "flag", check: (c) => c.units >= 1 },
   { id: "gems200", name: "寶石收藏家", desc: "同時擁有 200 顆寶石", icon: "diamond", check: (c) => c.gems >= 200 },
+  { id: "hard1", name: "迎難而上", desc: "用困難以上的難度過一關", icon: "shield", check: (c) => c.hard >= 1 },
+  { id: "legend1", name: "傳奇誕生", desc: "通過第一個傳奇關卡", icon: "crown", check: (c) => c.legend >= 1 },
+  { id: "legend10", name: "傳奇之路", desc: "通過 10 個傳奇關卡", icon: "crown", check: (c) => c.legend >= 10 },
+  { id: "boss1", name: "單元考過關", desc: "通過第一次單元考", icon: "swords", check: (c) => c.boss >= 1 },
   { id: "speak", name: "開口說", desc: "用語音答對一題默寫", icon: "mic" },
   { id: "flawless", name: "一字不差", desc: "默寫 5 題以上全部完美", icon: "keyboard" },
 ];
@@ -153,7 +160,7 @@ export const DEFAULT_GAME: GameState = {
   path: {},
   mistakes: {},
   boostUntil: 0,
-  settings: { hearts: true, sound: true },
+  settings: { hearts: true, sound: true, level: 1 },
 };
 
 /* ---------- Economy, hearts, shop ---------- */

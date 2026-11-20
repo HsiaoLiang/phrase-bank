@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Flame, Gem, Gift, Heart, Lock, PackageOpen, Snowflake, Timer, Volume2, VolumeX, Zap } from "lucide-react";
+import { Flame, Gem, Gift, Heart, Lock, PackageOpen, Snowflake, Star, Timer, Volume2, VolumeX, Zap } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { TABS } from "@/lib/data";
 import { ACHIEVEMENTS, MAX_HEARTS, SHOP, STREAK_MIN, lastNDays, type ShopItem } from "@/lib/game";
@@ -167,6 +167,28 @@ function SettingsPanel() {
       <div className="flex flex-col gap-3">
         {row("sound", "音效", "答對、答錯和過關的聲音", game.settings.sound ? <Volume2 className="h-4 w-4" /> : <VolumeX className="h-4 w-4" />)}
         {row("hearts", "生命制度", "關卡答錯會扣生命，關掉就無限", <Heart className="h-4 w-4" />)}
+        <div className="flex items-center gap-3">
+          <span className="grid h-9 w-9 place-items-center rounded-xl bg-secondary text-muted-foreground">
+            <Star className="h-4 w-4" />
+          </span>
+          <span className="min-w-0 flex-1">
+            <span className="block text-sm font-bold">預設難度</span>
+            <span className="block text-xs text-muted-foreground">路徑關卡會先推薦這個難度</span>
+          </span>
+          <span className="inline-flex rounded-xl border-2 p-0.5" role="group" aria-label="預設難度">
+            {([1, 2] as const).map((L) => (
+              <button
+                key={L}
+                type="button"
+                aria-pressed={game.settings.level === L}
+                onClick={() => setSetting("level", L)}
+                className="rounded-lg px-2.5 py-1 text-xs font-extrabold text-muted-foreground aria-pressed:bg-primary aria-pressed:text-primary-foreground"
+              >
+                {L === 1 ? "一般" : "困難"}
+              </button>
+            ))}
+          </span>
+        </div>
       </div>
     </Panel>
   );
