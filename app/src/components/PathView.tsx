@@ -210,14 +210,12 @@ export function PathView({
                             <div className="mt-3 flex flex-col gap-2">
                               {([1, 2, 3] as Level[]).map((L) => {
                                 const r = rulesFor(L);
-                                const locked3 = L === 3 && lv < 1;
                                 const recommended: Level = lv >= 2 ? 3 : lv === 1 ? (Math.max(preferred, 2) as Level) : preferred;
                                 const main = L === recommended;
                                 return (
                                   <button
                                     key={L}
                                     type="button"
-                                    disabled={locked3}
                                     onClick={() => start(nd, L)}
                                     title={LEVEL_DESC[L]}
                                     className={cn(
@@ -232,7 +230,7 @@ export function PathView({
                                       {lv >= L && <span className="text-xs opacity-75">已通過</span>}
                                     </span>
                                     <span className="text-xs font-bold opacity-85">
-                                      {locked3 ? "先過一次才能挑戰" : L === 1 ? "XP ×1" : `XP ×${r.xp}${r.gems ? `・+${r.gems} 寶石` : ""}`}
+                                      {L === 1 ? "XP ×1" : `XP ×${r.xp}${r.gems ? `・+${r.gems} 寶石` : ""}`}
                                     </span>
                                   </button>
                                 );
