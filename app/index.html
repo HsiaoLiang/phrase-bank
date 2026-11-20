@@ -14,6 +14,8 @@
         var p = JSON.parse(localStorage.getItem("phraseBank.prefs") || "{}");
         var dark = p.theme ? p.theme === "dark" : matchMedia("(prefers-color-scheme: dark)").matches;
         if (dark) document.documentElement.classList.add("dark");
+        var g = JSON.parse(localStorage.getItem("phraseBank.game") || "{}");
+        if (g.settings && g.settings.theme) document.documentElement.dataset.accent = g.settings.theme;
       } catch (e) {}
     </script>
   </head>

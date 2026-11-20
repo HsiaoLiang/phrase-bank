@@ -160,3 +160,63 @@
     transition-duration: 0.01ms !important;
   }
 }
+
+/* Theme colours unlocked by level (accent only; the rest of the palette stays) */
+@layer base {
+  :root[data-accent="forest"] {
+    --primary: 153 63% 33%;
+    --primary-hover: 153 65% 27%;
+    --accent: 145 50% 92%;
+    --accent-foreground: 153 66% 27%;
+    --ring: 153 63% 33%;
+  }
+  :root[data-accent="sunset"] {
+    --primary: 15 80% 53%;
+    --primary-hover: 15 78% 45%;
+    --accent: 22 100% 93%;
+    --accent-foreground: 15 78% 40%;
+    --ring: 15 80% 53%;
+  }
+  :root[data-accent="midnight"] {
+    --primary: 263 72% 56%;
+    --primary-hover: 263 66% 47%;
+    --accent: 263 100% 95%;
+    --accent-foreground: 263 66% 46%;
+    --ring: 263 72% 56%;
+  }
+  :root[data-accent="gold"] {
+    --primary: 40 88% 40%;
+    --primary-hover: 38 90% 33%;
+    --accent: 45 100% 90%;
+    --accent-foreground: 36 90% 30%;
+    --ring: 40 88% 40%;
+  }
+  .dark[data-accent="forest"] {
+    --primary: 150 55% 55%;
+    --primary-hover: 150 55% 63%;
+    --accent: 155 35% 20%;
+    --accent-foreground: 150 60% 72%;
+    --ring: 150 55% 55%;
+  }
+  .dark[data-accent="sunset"] {
+    --primary: 20 95% 64%;
+    --primary-hover: 20 95% 71%;
+    --accent: 18 40% 21%;
+    --accent-foreground: 22 95% 74%;
+    --ring: 20 95% 64%;
+  }
+  .dark[data-accent="midnight"] {
+    --primary: 265 90% 76%;
+    --primary-hover: 265 90% 82%;
+    --accent: 262 40% 26%;
+    --accent-foreground: 265 90% 84%;
+    --ring: 265 90% 76%;
+  }
+  .dark[data-accent="gold"] {
+    --primary: 44 95% 58%;
+    --primary-hover: 44 95% 66%;
+    --accent: 42 45% 20%;
+    --accent-foreground: 45 95% 68%;
+    --ring: 44 95% 58%;
+  }
+}

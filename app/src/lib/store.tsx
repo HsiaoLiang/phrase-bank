@@ -4,15 +4,14 @@ import {
   ACHIEVEMENTS,
   DEFAULT_GAME,
   GEMS,
-  HEART_REGEN_MS,
-  MAX_HEARTS,
-  SHOP,
   STREAK_MIN,
   XP,
   addDays,
   dayKey,
   heartsNow,
   levelInfo,
+  perksFor,
+  priceOf,
   streakOf,
   type ShopItem,
 } from "./game";
@@ -114,15 +113,24 @@ function useBankState() {
     const t = window.setInterval(() => setNow(Date.now()), 10000);
     return () => window.clearInterval(t);
   }, []);
-  const hearts = game.settings.hearts ? heartsNow(game, now) : { n: MAX_HEARTS, next: 0 };
+  const perks = useMemo(() => perksFor(lvl.level), [lvl.level]);
+  const perksRef = useRef(perks);
+  perksRef.current = perks;
+  const hearts = game.settings.hearts ? heartsNow(game, now, perks.maxHearts, perks.regenMs) : { n: perks.maxHearts, next: 0 };
+
+  /* theme colour (falls back to the default if it isn't unlocked) */
+  const theme = perks.themes.includes(game.settings.theme) ? game.settings.theme : "indigo";
+  useEffect(() => {
+    document.documentElement.dataset.accent = theme;
+  }, [theme]);
   const boostLeft = Math.max(0, game.boostUntil - now);
 
   useEffect(() => setSoundEnabled(game.settings.sound), [game.settings.sound]);
 
   const quests = useMemo(() => {
     const q = game.quests.date === today ? game.quests : { date: today, progress: {} as Record<string, number>, claimed: [] as string[] };
-    return questsFor(today).map((d) => ({ ...d, progress: Math.min(d.target, q.progress[d.kind] ?? 0), claimed: q.claimed.includes(d.id) }));
-  }, [game.quests, today]);
+    return questsFor(today, perks.questSlots).map((d) => ({ ...d, progress: Math.min(d.target, q.progress[d.kind] ?? 0), claimed: q.claimed.includes(d.id) }));
+  }, [game.quests, today, perks.questSlots]);
 
   const push = useCallback((c: Omit<Celebration, "id"> & Record<string, unknown>) => {
     setCelebs((q) => [...q, { ...(c as Celebration), id: ++cid.current }]);
@@ -362,25 +370,27 @@ function useBankState() {
     sfx.heart();
     setGame((g) => {
       const t = Date.now();
-      const { n } = heartsNow(g, t);
+      const { maxHearts, regenMs } = perksRef.current;
+      const { n } = heartsNow(g, t, maxHearts, regenMs);
       if (n <= 0) return g;
-      const heartsAt = n >= MAX_HEARTS ? t : t - ((t - g.heartsAt) % HEART_REGEN_MS);
+      const heartsAt = n >= maxHearts ? t : t - ((t - g.heartsAt) % regenMs);
       return { ...g, hearts: n - 1, heartsAt };
     });
   }, []);
 
   const buy = useCallback((item: ShopItem): boolean => {
     const g0 = gameRef.current;
-    const price = SHOP[item].price;
+    const pk = perksRef.current;
+    const price = priceOf(item, pk);
     if (g0.gems < price) {
       toast("寶石不夠");
       return false;
     }
-    if (item === "freeze" && g0.freezes >= SHOP.freeze.max) {
-      toast(`連勝凍結最多只能有 ${SHOP.freeze.max} 個`);
+    if (item === "freeze" && g0.freezes >= pk.freezeMax) {
+      toast(`連勝凍結最多只能有 ${pk.freezeMax} 個`);
       return false;
     }
-    if (item === "refill" && heartsNow(g0).n >= MAX_HEARTS) {
+    if (item === "refill" && heartsNow(g0, Date.now(), pk.maxHearts, pk.regenMs).n >= pk.maxHearts) {
       toast("生命已經是滿的");
       return false;
     }
@@ -388,17 +398,17 @@ function useBankState() {
       const t = Date.now();
       const base = { ...g, gems: g.gems - price };
       if (item === "freeze") return { ...base, freezes: g.freezes + 1 };
-      if (item === "refill") return { ...base, hearts: MAX_HEARTS, heartsAt: t };
-      return { ...base, boostUntil: Math.max(t, g.boostUntil) + SHOP.boost.minutes * 60000 };
+      if (item === "refill") return { ...base, hearts: pk.maxHearts, heartsAt: t };
+      return { ...base, boostUntil: Math.max(t, g.boostUntil) + pk.boostMinutes * 60000 };
     });
     sfx.chest();
-    toast(item === "freeze" ? "已裝備連勝凍結" : item === "refill" ? "生命補滿了" : `雙倍經驗開始，持續 ${SHOP.boost.minutes} 分鐘`);
+    toast(item === "freeze" ? "已裝備連勝凍結" : item === "refill" ? "生命補滿了" : `雙倍經驗開始，持續 ${pk.boostMinutes} 分鐘`);
     return true;
   }, []);
 
   const claimQuest = useCallback((id: string, at?: Point) => {
     const k = dayKey();
-    const def = questsFor(k).find((q) => q.id === id);
+    const def = questsFor(k, perksRef.current.questSlots).find((q) => q.id === id);
     const g0 = gameRef.current;
     if (!def || g0.quests.date !== k || g0.quests.claimed.includes(id) || (g0.quests.progress[def.kind] ?? 0) < def.target) return;
     setGame((g) => ({ ...g, gems: g.gems + def.reward, quests: { ...g.quests, claimed: [...g.quests.claimed, id] } }));
@@ -511,6 +521,8 @@ function useBankState() {
     todayXP,
     learnedCount,
     hearts,
+    perks,
+    theme,
     boostLeft,
     quests,
     pathStats,

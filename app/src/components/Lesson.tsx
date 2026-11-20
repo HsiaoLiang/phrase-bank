@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Check, Clock, Flame, Gem, Heart, HeartCrack, Infinity as InfinityIcon, RotateCcw, Shield, ShieldX, Snowflake, Target, Timer, Turtle, Volume2, X, Zap } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { shuffle } from "@/lib/data";
-import { GEMS, MAX_HEARTS, SHOP, STREAK_MIN, lastNDays } from "@/lib/game";
+import { GEMS, STREAK_MIN, lastNDays, priceOf } from "@/lib/game";
 import { confetti, speak } from "@/lib/fx";
 import { grade, norm, similarity } from "@/lib/grade";
 import { rulesFor, type Level, type Rules } from "@/lib/levels";
@@ -367,7 +367,7 @@ export function Lesson({
   onRetry?: () => void;
 }) {
   const bank = useBank();
-  const { items: all, hearts, game, gain, addGems, loseHeart, setLearned, completeNode, bumpQuest, recordCombo, mistake, buy, award, streak } = bank;
+  const { items: all, hearts, perks, game, gain, addGems, loseHeart, setLearned, completeNode, bumpQuest, recordCombo, mistake, buy, award, streak } = bank;
   const rules = useMemo(() => rulesFor(level, boss), [level, boss]);
   const [queue, setQueue] = useState<Ex[]>(() => buildLesson(items, all, level, boss));
   const [solved, setSolved] = useState(0);
@@ -771,7 +771,7 @@ export function Lesson({
           <HeartCrack className="h-28 w-28 animate-pop fill-bad/20 text-bad" strokeWidth={1.5} />
           <h2 className="m-0 text-3xl font-extrabold">生命用完了</h2>
           <p className="m-0 max-w-sm text-muted-foreground">
-            每 20 分鐘恢復 1 顆{hearts.next ? `，下一顆約 ${Math.ceil(hearts.next / 60000)} 分鐘後恢復` : ""}。也可以用寶石馬上補滿，或到設定關掉生命制度。
+            每 {Math.round(perks.regenMs / 60000)} 分鐘恢復 1 顆{hearts.next ? `，下一顆約 ${Math.ceil(hearts.next / 60000)} 分鐘後恢復` : ""}。也可以用寶石馬上補滿，或到設定關掉生命制度。
           </p>
           <p className="m-0 flex items-center gap-1.5 font-extrabold text-[hsl(199_89%_40%)] dark:text-[hsl(199_89%_65%)]">
             <Gem className="h-5 w-5" /> 你有 {game.gems} 顆寶石
@@ -783,7 +783,7 @@ export function Lesson({
           </button>
           <button
             type="button"
-            disabled={game.gems < SHOP.refill.price}
+            disabled={game.gems < priceOf("refill", perks)}
             className={cn(bigBtn, "bg-bad text-white")}
             style={shadow("--bad")}
             onClick={() => {
@@ -793,7 +793,7 @@ export function Lesson({
               }
             }}
           >
-            <Heart className="h-5 w-5 fill-current" /> {SHOP.refill.price} 寶石補滿
+            <Heart className="h-5 w-5 fill-current" /> {priceOf("refill", perks)} 寶石補滿
           </button>
         </Bottom>
       </Screen>
@@ -827,7 +827,7 @@ export function Lesson({
             })}
           </span>
         ) : (
-          <span key={hearts.n} className={cn("flex items-center gap-1 text-lg font-extrabold", heartsOn ? "text-bad" : "text-muted-foreground", heartsOn && hearts.n < MAX_HEARTS && "animate-pop")} aria-label={heartsOn ? `剩 ${hearts.n} 顆生命` : "生命制度關閉"}>
+          <span key={hearts.n} className={cn("flex items-center gap-1 text-lg font-extrabold", heartsOn ? "text-bad" : "text-muted-foreground", heartsOn && hearts.n < perks.maxHearts && "animate-pop")} aria-label={heartsOn ? `剩 ${hearts.n} 顆生命` : "生命制度關閉"}>
             <Heart className={cn("h-6 w-6", heartsOn && "fill-bad")} />
             {heartsOn ? <span className="tabular">{hearts.n}</span> : <InfinityIcon className="h-5 w-5" />}
           </span>

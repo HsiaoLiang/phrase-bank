@@ -50,5 +50,5 @@ export interface GameState {
   mistakes: Record<string, number>;
   /** double XP active until this timestamp (ms) */
   boostUntil: number;
-  settings: { hearts: boolean; sound: boolean; level: 1 | 2 };
+  settings: { hearts: boolean; sound: boolean; level: 1 | 2; theme: "indigo" | "forest" | "sunset" | "midnight" | "gold" };
 }

@@ -42,13 +42,13 @@ function hash(s: string) {
 }
 
 /** Three quests per day, the same all day: one XP quest plus two others of different kinds. */
-export function questsFor(date: string): QuestDef[] {
+export function questsFor(date: string, slots = 3): QuestDef[] {
   const h = hash(date);
   const xp = XP_QUESTS[h % XP_QUESTS.length];
   const pool = OTHER.slice();
   const picked: QuestDef[] = [];
   let k = h;
-  while (picked.length < 2 && pool.length) {
+  while (picked.length < slots - 1 && pool.length) {
     k = Math.imul(k ^ (k >>> 13), 1274126177) >>> 0;
     const q = pool.splice(k % pool.length, 1)[0];
     if (!picked.some((p) => p.kind === q.kind)) picked.push(q);

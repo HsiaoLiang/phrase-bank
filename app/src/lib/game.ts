@@ -160,7 +160,7 @@ export const DEFAULT_GAME: GameState = {
   path: {},
   mistakes: {},
   boostUntil: 0,
-  settings: { hearts: true, sound: true, level: 1 },
+  settings: { hearts: true, sound: true, level: 1, theme: "indigo" },
 };
 
 /* ---------- Economy, hearts, shop ---------- */
@@ -174,10 +174,65 @@ export const SHOP = {
 } as const;
 export type ShopItem = keyof typeof SHOP;
 
-export function heartsNow(g: { hearts: number; heartsAt: number }, now = Date.now()) {
-  if (g.hearts >= MAX_HEARTS) return { n: MAX_HEARTS, next: 0 };
-  const gained = Math.floor((now - g.heartsAt) / HEART_REGEN_MS);
-  const n = Math.min(MAX_HEARTS, g.hearts + Math.max(0, gained));
-  const next = n >= MAX_HEARTS ? 0 : HEART_REGEN_MS - ((now - g.heartsAt) % HEART_REGEN_MS);
+export function heartsNow(g: { hearts: number; heartsAt: number }, now = Date.now(), max = MAX_HEARTS, regen = HEART_REGEN_MS) {
+  if (g.hearts >= max) return { n: max, next: 0 };
+  const gained = Math.floor((now - g.heartsAt) / regen);
+  const n = Math.min(max, g.hearts + Math.max(0, gained));
+  const next = n >= max ? 0 : regen - ((now - g.heartsAt) % regen);
   return { n, next };
+}
+
+/* ---------- Level rewards ---------- */
+export type ThemeId = "indigo" | "forest" | "sunset" | "midnight" | "gold";
+export const THEMES: { id: ThemeId; name: string; level: number; swatch: string }[] = [
+  { id: "indigo", name: "靛藍", level: 1, swatch: "#4255ff" },
+  { id: "forest", name: "森林綠", level: 2, swatch: "#1f8a5b" },
+  { id: "sunset", name: "日落橘", level: 5, swatch: "#e8572a" },
+  { id: "midnight", name: "午夜紫", level: 10, swatch: "#7b3fe0" },
+  { id: "gold", name: "黃金", level: 20, swatch: "#c48a0c" },
+];
+
+export interface Perk {
+  level: number;
+  text: string;
+}
+export const LEVEL_PERKS: Perk[] = [
+  { level: 2, text: "解鎖主題色「森林綠」" },
+  { level: 3, text: "愛心上限 +1（6 顆）" },
+  { level: 4, text: "每日任務變成 4 個" },
+  { level: 5, text: "解鎖主題色「日落橘」" },
+  { level: 6, text: "商店 9 折" },
+  { level: 8, text: "愛心恢復變快：每 15 分鐘 1 顆" },
+  { level: 10, text: "愛心上限 +1（7 顆）" },
+  { level: 10, text: "解鎖主題色「午夜紫」" },
+  { level: 12, text: "雙倍經驗延長到 20 分鐘" },
+  { level: 14, text: "商店 8 折" },
+  { level: 16, text: "連勝凍結最多可存 3 個" },
+  { level: 20, text: "解鎖主題色「黃金」" },
+];
+
+export interface Perks {
+  maxHearts: number;
+  regenMs: number;
+  questSlots: number;
+  discount: number;
+  boostMinutes: number;
+  freezeMax: number;
+  themes: ThemeId[];
+}
+
+export function perksFor(level: number): Perks {
+  return {
+    maxHearts: MAX_HEARTS + (level >= 3 ? 1 : 0) + (level >= 10 ? 1 : 0),
+    regenMs: level >= 8 ? 15 * 60 * 1000 : HEART_REGEN_MS,
+    questSlots: level >= 4 ? 4 : 3,
+    discount: level >= 14 ? 0.2 : level >= 6 ? 0.1 : 0,
+    boostMinutes: level >= 12 ? 20 : SHOP.boost.minutes,
+    freezeMax: level >= 16 ? 3 : SHOP.freeze.max,
+    themes: THEMES.filter((t) => level >= t.level).map((t) => t.id),
+  };
+}
+
+export function priceOf(item: ShopItem, perks: Perks) {
+  return Math.round(SHOP[item].price * (1 - perks.discount));
 }

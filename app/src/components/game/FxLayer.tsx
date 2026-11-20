@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from "react";
-import { Target, X } from "lucide-react";
+import { Gift, Target, X } from "lucide-react";
 import { floats, toasts, type FloatEv } from "@/lib/fx";
 import { cn } from "@/lib/utils";
-import { achById } from "@/lib/game";
+import { GEMS, LEVEL_PERKS, achById } from "@/lib/game";
 import { useBank, type Celebration } from "@/lib/store";
 import { ACH_ICON, LevelBadge } from "./bits";
 
@@ -114,9 +114,19 @@ function LevelUp({ c, onDone }: { c: Extract<Celebration, { type: "level" }>; on
           <LevelBadge level={c.level} size="lg" className="animate-wiggle" />
         </div>
         <h2 id="lvl-title" className="m-0 text-3xl font-extrabold">升到 Lv.{c.level}！</h2>
-        <p className="mb-6 mt-2 text-muted-foreground">
+        <p className="mb-4 mt-2 text-muted-foreground">
           新稱號：<b className="text-foreground">{c.title}</b>
         </p>
+        <ul className="mb-6 flex list-none flex-col gap-2 p-0 text-left">
+          {LEVEL_PERKS.filter((p) => p.level === c.level).map((p) => (
+            <li key={p.text} className="flex animate-rise items-center gap-2 rounded-xl bg-accent px-3 py-2 font-bold text-accent-foreground">
+              <Gift className="h-4 w-4 shrink-0" /> {p.text}
+            </li>
+          ))}
+          <li className="flex items-center gap-2 rounded-xl bg-secondary px-3 py-2 font-bold text-muted-foreground">
+            <Gift className="h-4 w-4 shrink-0" /> +{GEMS.levelUp} 寶石
+          </li>
+        </ul>
         <button
           ref={btn}
           type="button"
