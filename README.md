@@ -32,7 +32,7 @@
 
 ## 內容
 
-共 501 條，分四類：日常聊天、Coffee chat / 面試、課堂・簡報・會議、單字。資料在 `app/src/lib/raw.ts`，一行一條：
+共 2000 條，分四類：日常聊天、Coffee chat / 面試、課堂・簡報・會議、單字。資料在 `app/src/lib/raw.ts`，一行一條：
 
 ```ts
 ["分區", "英文", "中文", "例句（可留空）", "casual | neutral | formal"],
