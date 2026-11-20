@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Target, X } from "lucide-react";
 import { floats, toasts, type FloatEv } from "@/lib/fx";
+import { cn } from "@/lib/utils";
 import { achById } from "@/lib/game";
 import { useBank, type Celebration } from "@/lib/store";
 import { ACH_ICON, LevelBadge } from "./bits";
@@ -20,7 +21,10 @@ function Floats() {
       {list.map((f) => (
         <span
           key={f.id}
-          className="absolute animate-floatup whitespace-nowrap rounded-full bg-xp px-2.5 py-0.5 text-sm font-extrabold text-[#3a2600] shadow-lift"
+          className={cn(
+            "absolute animate-floatup whitespace-nowrap rounded-full px-2.5 py-0.5 text-sm font-extrabold shadow-lift",
+            f.kind === "gem" ? "bg-[hsl(199_89%_48%)] text-white" : f.kind === "heart" ? "bg-bad text-white" : "bg-xp text-[#3a2600]",
+          )}
           style={{ left: f.x, top: f.y }}
         >
           {f.text}
@@ -135,7 +139,7 @@ export function FxLayer() {
       <Floats />
       <Toasts />
       {level && <LevelUp c={level} onDone={() => dismiss(level.id)} />}
-      <div className="pointer-events-none fixed bottom-4 right-4 z-[85] flex flex-col items-end gap-2" aria-live="polite">
+      <div className="pointer-events-none fixed right-4 top-20 z-[85] flex flex-col items-end gap-2" aria-live="polite">
         {others.map((c) => (
           <AchToast key={c.id} c={c} onDone={() => dismiss(c.id)} />
         ))}

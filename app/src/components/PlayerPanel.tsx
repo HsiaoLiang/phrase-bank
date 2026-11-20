@@ -1,7 +1,9 @@
-import { Flame, Lock, Timer, Zap } from "lucide-react";
+import { useEffect, useState } from "react";
+import { Flame, Gem, Gift, Heart, Lock, PackageOpen, Snowflake, Timer, Volume2, VolumeX, Zap } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { TABS } from "@/lib/data";
-import { ACHIEVEMENTS, STREAK_MIN, lastNDays } from "@/lib/game";
+import { ACHIEVEMENTS, MAX_HEARTS, SHOP, STREAK_MIN, lastNDays, type ShopItem } from "@/lib/game";
+import { msUntilMidnight } from "@/lib/quests";
 import { useBank } from "@/lib/store";
 import { ACH_ICON, Bar, LevelBadge, Ring, fmtTime } from "./game/bits";
 
@@ -19,6 +21,157 @@ function Panel({ title, right, children, className }: { title: string; right?: R
   );
 }
 
+const GEM_TXT = "text-[hsl(199_89%_40%)] dark:text-[hsl(199_89%_65%)]";
+
+function fmtLeft(ms: number) {
+  const h = Math.floor(ms / 3600000);
+  const m = Math.ceil((ms % 3600000) / 60000);
+  return h ? `${h} 小時 ${m} 分` : `${m} 分鐘`;
+}
+
+export function StatStrip({ className }: { className?: string }) {
+  const { streak, game, hearts } = useBank();
+  const heartsOn = game.settings.hearts;
+  return (
+    <div className={cn("grid grid-cols-3 gap-2 rounded-2xl bg-card p-3 shadow-card", className)}>
+      <div className="flex flex-col items-center gap-0.5" title={`連續學習 ${streak} 天`}>
+        <span className={cn("flex items-center gap-1 text-lg font-extrabold", streak ? "text-streak" : "text-muted-foreground")}>
+          <Flame className={cn("h-6 w-6", streak > 0 && "animate-flicker fill-streak/30")} />
+          <span className="tabular">{streak}</span>
+        </span>
+        <span className="text-[11px] font-bold text-muted-foreground">連續天數</span>
+      </div>
+      <div className="flex flex-col items-center gap-0.5" title={`${game.gems} 顆寶石`}>
+        <span className={cn("flex items-center gap-1 text-lg font-extrabold", GEM_TXT)}>
+          <Gem className="h-6 w-6" />
+          <span className="tabular">{game.gems}</span>
+        </span>
+        <span className="text-[11px] font-bold text-muted-foreground">寶石</span>
+      </div>
+      <div className="flex flex-col items-center gap-0.5" title={heartsOn ? `${hearts.n} 顆生命` : "生命制度已關閉"}>
+        <span className={cn("flex items-center gap-1 text-lg font-extrabold", heartsOn ? "text-bad" : "text-muted-foreground")}>
+          <Heart className={cn("h-6 w-6", heartsOn && "fill-bad")} />
+          <span className="tabular">{heartsOn ? hearts.n : "∞"}</span>
+        </span>
+        <span className="text-[11px] font-bold text-muted-foreground">
+          {heartsOn && hearts.n < MAX_HEARTS && hearts.next ? `${Math.ceil(hearts.next / 60000)} 分後 +1` : "生命"}
+        </span>
+      </div>
+    </div>
+  );
+}
+
+export function QuestPanel() {
+  const { quests, claimQuest } = useBank();
+  const [left, setLeft] = useState(msUntilMidnight());
+  useEffect(() => {
+    const t = window.setInterval(() => setLeft(msUntilMidnight()), 30000);
+    return () => window.clearInterval(t);
+  }, []);
+  return (
+    <Panel title="每日任務" right={<span className="text-xs font-bold text-muted-foreground">{fmtLeft(left)}後更新</span>}>
+      <ul className="m-0 flex list-none flex-col gap-3 p-0">
+        {quests.map((q) => {
+          const ready = q.progress >= q.target && !q.claimed;
+          return (
+            <li key={q.id} className="flex items-center gap-3">
+              <div className="min-w-0 flex-1">
+                <p className="m-0 text-sm font-bold">{q.title}</p>
+                <div className="relative mt-1.5">
+                  <Bar value={q.progress} max={q.target} fill={q.claimed ? "bg-good" : "bg-xp"} className="h-4" label={q.title} />
+                  <span className="tabular absolute inset-0 grid place-items-center text-[11px] font-extrabold text-foreground/70">
+                    {q.progress} / {q.target}
+                  </span>
+                </div>
+              </div>
+              <button
+                type="button"
+                disabled={!ready}
+                onClick={(e) => {
+                  const r = e.currentTarget.getBoundingClientRect();
+                  claimQuest(q.id, { x: r.left + r.width / 2, y: r.top });
+                }}
+                aria-label={q.claimed ? "已領取" : ready ? `領取 ${q.reward} 寶石` : `完成後可領 ${q.reward} 寶石`}
+                title={q.claimed ? "已領取" : `${q.reward} 寶石`}
+                className={cn(
+                  "grid h-11 w-11 shrink-0 place-items-center rounded-xl transition-transform",
+                  ready ? "animate-bounce bg-xp text-white shadow-btn" : q.claimed ? "bg-secondary text-good" : "bg-secondary text-muted-foreground/60",
+                )}
+              >
+                {q.claimed ? <PackageOpen className="h-5 w-5" /> : <Gift className="h-5 w-5" />}
+              </button>
+            </li>
+          );
+        })}
+      </ul>
+    </Panel>
+  );
+}
+
+export function ShopPanel() {
+  const { game, buy, boostLeft, hearts } = useBank();
+  const rows: { k: ShopItem; icon: React.ReactNode; note: string }[] = [
+    { k: "freeze", icon: <Snowflake className="h-5 w-5" />, note: `擁有 ${game.freezes} / ${SHOP.freeze.max}` },
+    { k: "refill", icon: <Heart className="h-5 w-5 fill-current" />, note: game.settings.hearts ? `目前 ${hearts.n} / ${MAX_HEARTS}` : "生命制度已關閉" },
+    { k: "boost", icon: <Zap className="h-5 w-5" />, note: boostLeft ? `剩 ${Math.ceil(boostLeft / 60000)} 分鐘` : "" },
+  ];
+  const tint: Record<ShopItem, string> = {
+    freeze: "bg-[hsl(199_89%_48%/.14)] text-[hsl(199_89%_42%)]",
+    refill: "bg-bad-soft text-bad",
+    boost: "bg-xp-soft text-[hsl(30_100%_30%)] dark:text-xp",
+  };
+  return (
+    <Panel title="商店" right={<span className={cn("flex items-center gap-1 text-sm font-extrabold", GEM_TXT)}><Gem className="h-4 w-4" />{game.gems}</span>}>
+      <ul className="m-0 flex list-none flex-col gap-3 p-0">
+        {rows.map((r) => {
+          const it = SHOP[r.k];
+          return (
+            <li key={r.k} className="flex items-center gap-3">
+              <span className={cn("grid h-10 w-10 shrink-0 place-items-center rounded-xl", tint[r.k])}>{r.icon}</span>
+              <div className="min-w-0 flex-1">
+                <p className="m-0 text-sm font-extrabold">{it.name}</p>
+                <p className="m-0 text-xs text-muted-foreground">{it.desc}{r.note && `・${r.note}`}</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => buy(r.k)}
+                disabled={game.gems < it.price}
+                className={cn("inline-flex shrink-0 items-center gap-1 rounded-xl border-2 border-b-4 px-2.5 py-1.5 text-sm font-extrabold transition-transform active:translate-y-0.5 active:border-b-2 disabled:opacity-45", GEM_TXT)}
+              >
+                <Gem className="h-4 w-4" />
+                {it.price}
+              </button>
+            </li>
+          );
+        })}
+      </ul>
+    </Panel>
+  );
+}
+
+function SettingsPanel() {
+  const { game, setSetting } = useBank();
+  const row = (k: "sound" | "hearts", label: string, desc: string, icon: React.ReactNode) => (
+    <label className="flex cursor-pointer items-center gap-3">
+      <span className="grid h-9 w-9 place-items-center rounded-xl bg-secondary text-muted-foreground">{icon}</span>
+      <span className="min-w-0 flex-1">
+        <span className="block text-sm font-bold">{label}</span>
+        <span className="block text-xs text-muted-foreground">{desc}</span>
+      </span>
+      <input type="checkbox" className="peer sr-only" checked={game.settings[k]} onChange={(e) => setSetting(k, e.target.checked)} />
+      <span className="relative h-6 w-11 shrink-0 rounded-full bg-border transition-colors after:absolute after:left-0.5 after:top-0.5 after:h-5 after:w-5 after:rounded-full after:bg-white after:shadow after:transition-transform peer-checked:bg-good peer-checked:after:translate-x-5 peer-focus-visible:outline peer-focus-visible:outline-2 peer-focus-visible:outline-ring" />
+    </label>
+  );
+  return (
+    <Panel title="設定">
+      <div className="flex flex-col gap-3">
+        {row("sound", "音效", "答對、答錯和過關的聲音", game.settings.sound ? <Volume2 className="h-4 w-4" /> : <VolumeX className="h-4 w-4" />)}
+        {row("hearts", "生命制度", "關卡答錯會扣生命，關掉就無限", <Heart className="h-4 w-4" />)}
+      </div>
+    </Panel>
+  );
+}
+
 export function PlayerPanel() {
   const { game, lvl, streak, todayXP, setGoal } = useBank();
   const week = lastNDays(game.days, 7);
@@ -27,6 +180,8 @@ export function PlayerPanel() {
 
   return (
     <div className="flex flex-col gap-4">
+      <StatStrip />
+      <QuestPanel />
       {/* Player card */}
       <section className="relative overflow-hidden rounded-2xl bg-card p-4 shadow-card">
         <div className="pointer-events-none absolute -right-10 -top-10 h-32 w-32 rounded-full bg-primary/10" aria-hidden="true" />
@@ -92,6 +247,7 @@ export function PlayerPanel() {
           {week.map((d) => {
             const h = maxDay ? Math.max(4, Math.round((d.xp / maxDay) * 64)) : 4;
             const hit = d.xp >= STREAK_MIN;
+            const froze = game.frozen.includes(d.key);
             return (
               <div key={d.key} className="flex flex-1 flex-col items-center gap-1.5" title={`${d.key}：${d.xp} XP`}>
                 <div className="flex h-16 w-full items-end justify-center">
@@ -101,14 +257,18 @@ export function PlayerPanel() {
                   />
                 </div>
                 <span className={cn("grid h-6 w-6 place-items-center rounded-full text-[11px] font-bold", d.today ? "bg-foreground text-background" : "text-muted-foreground")}>
-                  {hit ? <Flame className={cn("h-3.5 w-3.5", d.today ? "text-xp" : "text-streak")} /> : d.label}
+                  {hit ? <Flame className={cn("h-3.5 w-3.5", d.today ? "text-xp" : "text-streak")} /> : froze ? <Snowflake className="h-3.5 w-3.5 text-[hsl(199_89%_48%)]" /> : d.label}
                 </span>
               </div>
             );
           })}
         </div>
-        <p className="m-0 mt-2 text-xs text-muted-foreground">一天拿到 {STREAK_MIN} XP 以上就算有學習。</p>
+        <p className="m-0 mt-2 text-xs text-muted-foreground">
+          一天拿到 {STREAK_MIN} XP 以上就算有學習。{game.freezes > 0 ? `已裝備 ${game.freezes} 個連勝凍結。` : "可以到商店買連勝凍結保護紀錄。"}
+        </p>
       </Panel>
+
+      <ShopPanel />
 
       {/* Achievements */}
       <Panel
@@ -159,6 +319,7 @@ export function PlayerPanel() {
           ))}
         </dl>
       </Panel>
+      <SettingsPanel />
     </div>
   );
 }

@@ -62,12 +62,16 @@ export function addDays(d: Date, n: number) {
 /** A day counts towards the streak once it has at least this much XP. */
 export const STREAK_MIN = 10;
 
-export function streakOf(days: Record<string, number>) {
+/** Days with enough XP count; days covered by a streak freeze bridge the gap without counting. */
+export function streakOf(days: Record<string, number>, frozen: string[] = []) {
+  const fz = new Set(frozen);
   let d = new Date();
   if ((days[dayKey(d)] ?? 0) < STREAK_MIN) d = addDays(d, -1);
   let n = 0;
-  while ((days[dayKey(d)] ?? 0) >= STREAK_MIN) {
-    n++;
+  for (let guard = 0; guard < 3650; guard++) {
+    const k = dayKey(d);
+    if ((days[k] ?? 0) >= STREAK_MIN) n++;
+    else if (!fz.has(k)) break;
     d = addDays(d, -1);
   }
   return n;
@@ -85,6 +89,9 @@ export function lastNDays(days: Record<string, number>, n: number) {
 }
 
 export interface AchCtx {
+  lessons: number;
+  units: number;
+  gems: number;
   learned: number;
   total: number;
   mastered: number;
@@ -99,7 +106,7 @@ export interface Achievement {
   id: string;
   name: string;
   desc: string;
-  icon: "sprout" | "book" | "trophy" | "crown" | "flame" | "zap" | "target" | "timer" | "pen" | "medal" | "star" | "gem" | "mic" | "keyboard";
+  icon: "sprout" | "book" | "trophy" | "crown" | "flame" | "zap" | "target" | "timer" | "pen" | "medal" | "star" | "gem" | "mic" | "keyboard" | "map" | "flag" | "diamond";
   check?: (c: AchCtx) => boolean;
 }
 
@@ -117,6 +124,9 @@ export const ACHIEVEMENTS: Achievement[] = [
   { id: "combo", name: "手感火燙", desc: "連續答對 10 題", icon: "zap" },
   { id: "perfect", name: "零失誤", desc: "測驗 5 題以上全對", icon: "gem" },
   { id: "fast", name: "閃電手", desc: "配對遊戲 30 秒內完成", icon: "timer" },
+  { id: "lesson1", name: "啟程", desc: "完成路徑上的第一關", icon: "map", check: (c) => c.lessons >= 1 },
+  { id: "unit1", name: "單元達人", desc: "完成一整個單元", icon: "flag", check: (c) => c.units >= 1 },
+  { id: "gems200", name: "寶石收藏家", desc: "同時擁有 200 顆寶石", icon: "diamond", check: (c) => c.gems >= 200 },
   { id: "speak", name: "開口說", desc: "用語音答對一題默寫", icon: "mic" },
   { id: "flawless", name: "一字不差", desc: "默寫 5 題以上全部完美", icon: "keyboard" },
 ];
@@ -134,4 +144,33 @@ export const DEFAULT_GAME: GameState = {
   bestMatch: {},
   bestCombo: 0,
   goal: 60,
+  gems: 50,
+  hearts: 5,
+  heartsAt: 0,
+  freezes: 0,
+  frozen: [],
+  quests: { date: "", progress: {}, claimed: [] },
+  path: {},
+  mistakes: {},
+  boostUntil: 0,
+  settings: { hearts: true, sound: true },
 };
+
+/* ---------- Economy, hearts, shop ---------- */
+export const MAX_HEARTS = 5;
+export const HEART_REGEN_MS = 20 * 60 * 1000;
+export const GEMS = { lesson: 5, perfect: 5, levelUp: 20, ach: 10, chestMin: 15, chestMax: 30 } as const;
+export const SHOP = {
+  freeze: { price: 40, max: 2, name: "連勝凍結", desc: "漏掉一天時自動保住連續紀錄" },
+  refill: { price: 30, name: "補滿生命", desc: "生命直接回到 5 顆" },
+  boost: { price: 50, minutes: 15, name: "雙倍經驗", desc: "15 分鐘內拿到的 XP 加倍" },
+} as const;
+export type ShopItem = keyof typeof SHOP;
+
+export function heartsNow(g: { hearts: number; heartsAt: number }, now = Date.now()) {
+  if (g.hearts >= MAX_HEARTS) return { n: MAX_HEARTS, next: 0 };
+  const gained = Math.floor((now - g.heartsAt) / HEART_REGEN_MS);
+  const n = Math.min(MAX_HEARTS, g.hearts + Math.max(0, gained));
+  const next = n >= MAX_HEARTS ? 0 : HEART_REGEN_MS - ((now - g.heartsAt) % HEART_REGEN_MS);
+  return { n, next };
+}

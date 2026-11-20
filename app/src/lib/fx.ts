@@ -22,7 +22,7 @@ export interface FloatEv {
   text: string;
   x: number;
   y: number;
-  kind: "xp" | "combo";
+  kind: "xp" | "combo" | "gem" | "heart";
 }
 export const floats = bus<FloatEv>();
 let fid = 0;
@@ -34,6 +34,13 @@ export function floatXP(amount: number, at?: { x: number; y: number } | null, la
   const x = at?.x ?? (hud ? hud.left + hud.width / 2 : innerWidth / 2);
   const y = at?.y ?? (hud ? hud.bottom + 8 : 80);
   floats.emit({ id: ++fid, text: label ?? `+${amount} XP`, x, y, kind: "xp" });
+}
+
+export function floatFx(text: string, kind: FloatEv["kind"], at?: { x: number; y: number } | null) {
+  const hud = document.getElementById(kind === "gem" ? "hud-gem" : "hud-xp")?.getBoundingClientRect();
+  const x = at?.x ?? (hud ? hud.left + hud.width / 2 : innerWidth / 2);
+  const y = at?.y ?? (hud ? hud.bottom + 8 : 80);
+  floats.emit({ id: ++fid, text, x, y, kind });
 }
 
 export function pointOf(e?: { currentTarget: EventTarget | null } | null) {

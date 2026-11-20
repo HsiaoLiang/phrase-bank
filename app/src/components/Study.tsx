@@ -559,7 +559,7 @@ interface WriteResult {
 }
 
 function Write({ pool, onExit }: { pool: Item[]; onExit: () => void }) {
-  const { setLearned, gain, recordCombo, award } = useBank();
+  const { setLearned, gain, recordCombo, award, bumpQuest } = useBank();
   const [round, setRound] = useState(0);
   const deck = useMemo(() => shuffle(pool), [pool, round]); // eslint-disable-line react-hooks/exhaustive-deps
   const [i, setI] = useState(0);
@@ -593,6 +593,7 @@ function Write({ pool, onExit }: { pool: Item[]; onExit: () => void }) {
       setXp((x) => x + amt);
       gain(amt, at, c >= 3 ? `+${amt} XP · ${c} 連擊` : undefined);
       setLearned(it.id, true, null, false);
+      bumpQuest("write");
       if (spoken) award("speak");
       setTally((t) => ({ ...t, [g.level]: t[g.level as "perfect" | "close"] + 1 }));
     } else {
